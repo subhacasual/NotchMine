@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src https://api.open-meteo.com https://geocoding-api.open-meteo.com; media-src 'self' data:">
+  <title>NotchMine</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- light emitted by the album art; lives outside the notch so it can spill past its edges -->
+  <canvas id="sparkLayer"></canvas>
+  <div id="island" data-mode="collapsed">
+    <div class="ear l"></div>
+    <div class="ear r"></div>
+    <div id="notch">
+
+      <!-- ============ COMPACT (collapsed) ============ -->
+      <div class="layer" id="compact">
+        <div class="c-slot c-left" id="cLeft"></div>
+        <div class="c-slot c-center" id="cCenter"></div>
+        <div class="c-slot c-right" id="cRight"></div>
+      </div>
+
+      <!-- ============ PEEK (live activity) ============ -->
+      <div class="layer" id="peek"></div>
+
+      <!-- ============ EXPANDED ============ -->
+      <div class="layer" id="expanded">
+        <header class="hdr">
+          <nav class="tabs" id="tabs">
+            <button class="tab-btn" data-tab="home" title="Home"><i data-icon="home"></i><span>Home</span></button>
+            <button class="tab-btn" data-tab="tools" title="Focus"><i data-icon="timer"></i><span>Focus</span></button>
+            <button class="tab-btn" data-tab="system" title="System"><i data-icon="cpu"></i><span>System</span></button>
+            <button class="tab-btn" data-tab="apps" title="Apps"><i data-icon="grid"></i><span>Apps</span></button>
+            <button class="tab-btn" data-tab="shelf" title="Shelf"><i data-icon="tray"></i><span>Shelf</span><b class="badge" id="shelfBadge"></b></button>
+            <button class="tab-btn" data-tab="alerts" title="Notifications"><i data-icon="bell"></i><span>Alerts</span><b class="badge" id="alertBadge"></b></button>
+          </nav>
+          <div class="hdr-stats" id="hdrStats" title="Network · processor · memory · battery"></div>
+          <div class="hdr-right">
+            <span class="hdr-ind" id="hdrInd"></span>
+            <span class="hdr-time" id="hdrTime"></span>
+            <button class="icon-btn" id="pinBtn" title="Keep open"><i data-icon="pin"></i></button>
+            <button class="icon-btn tab-btn" data-tab="settings" title="Settings"><i data-icon="sliders"></i></button>
+          </div>
+        </header>
+
+        <main class="pages">
+          <!-- HOME -->
+          <section class="page" data-page="home">
+            <div class="card media-card" id="mediaCard">
+              <div class="mc-glow" id="mcGlow"></div>
+              <div class="mc-top">
+                <div class="mc-art" id="mcArt"><i data-icon="music"></i></div>
+                <div class="mc-info">
+                  <div class="mc-app" id="mcApp">Media</div>
+                  <div class="mc-title" id="mcTitle">Nothing playing</div>
+                  <div class="mc-artist" id="mcArtist">Play something in Spotify, YouTube…</div>
+                </div>
+                <div class="eq big live" id="mcEq"><i></i><i></i><i></i><i></i><i></i></div>
+                <button class="mc-lyr-btn" id="mcLyrBtn" title="Lyrics"><i data-icon="quote"></i></button>
+              </div>
+              <div class="mc-lyrics" id="mcLyrics"></div>
+              <div class="mc-progress" id="mcProgress">
+                <span class="t" id="mcPos">0:00</span>
+                <div class="bar" id="mcBar"><div class="fill" id="mcFill"></div></div>
+                <span class="t" id="mcDur">0:00</span>
+              </div>
+              <canvas class="mc-spectrum" id="mcSpec"></canvas>
+              <button class="mc-party mc-deskeq" id="mcDeskEq" title="Desktop equalizer along the bottom of the screen"><i data-icon="mixer"></i></button>
+              <button class="mc-party" id="mcParty" title="Party mode: fill the screen with the music (Ctrl+Alt+P)"><i data-icon="sparkle"></i><span>Party</span></button>
+              <div class="mc-controls">
+                <button class="ctl" id="mcPrev" title="Previous"><i data-icon="prev"></i></button>
+                <button class="ctl play" id="mcPlay" title="Play / Pause"><i data-icon="play"></i></button>
+                <button class="ctl" id="mcNext" title="Next"><i data-icon="next"></i></button>
+              </div>
+            </div>
+
+            <div class="card clock-card">
+              <div class="clk-time" id="clkTime">--:--</div>
+              <div class="clk-date" id="clkDate"></div>
+              <div class="cal">
+                <div class="cal-head">
+                  <span id="calMonth"></span>
+                  <span class="cal-nav">
+                    <button class="mini-btn" id="calPrev"><i data-icon="chevL"></i></button>
+                    <button class="mini-btn" id="calNext"><i data-icon="chevR"></i></button>
+                  </span>
+                </div>
+                <div class="cal-grid" id="calGrid"></div>
+              </div>
+            </div>
+
+            <div class="card weather-card" id="weatherCard" title="Weather data by Open-Meteo.com (CC BY 4.0)">
+              <div class="wx-loc"><i data-icon="pin2"></i><span id="wxCity">Set a city</span></div>
+              <div class="wx-main">
+                <span class="wx-icon" id="wxIcon">⛅</span>
+                <span class="wx-temp" id="wxTemp">--°</span>
+              </div>
+              <div class="wx-cond" id="wxCond">Loading weather…</div>
+              <div class="wx-meta">
+                <span><i data-icon="droplet"></i><b id="wxHum">--</b></span>
+                <span><i data-icon="wind"></i><b id="wxWind">--</b></span>
+                <span class="wx-hl" id="wxHL"></span>
+              </div>
+              <div class="wx-days" id="wxDays"></div>
+            </div>
+          </section>
+
+          <!-- FOCUS / TOOLS -->
+          <section class="page" data-page="tools">
+            <div class="card timer-card">
+              <div class="ring-wrap">
+                <svg class="ring" viewBox="0 0 120 120">
+                  <circle class="ring-bg" cx="60" cy="60" r="52"></circle>
+                  <circle class="ring-fg" id="ringFg" cx="60" cy="60" r="52"></circle>
+                </svg>
+                <div class="ring-text">
+                  <div class="ring-time" id="tmTime">25:00</div>
+                  <div class="ring-label" id="tmLabel">Focus</div>
+                </div>
+              </div>
+              <div class="tm-side">
+                <div class="chips" id="tmPresets">
+                  <button class="chip" data-preset="focus">Focus</button>
+                  <button class="chip" data-preset="break">Break</button>
+                  <button class="chip" data-min="1">1m</button>
+                  <button class="chip" data-min="5">5m</button>
+                  <button class="chip" data-min="10">10m</button>
+                  <button class="chip" data-min="15">15m</button>
+                </div>
+                <div class="tm-adjust">
+                  <button class="mini-btn" id="tmMinus" title="-1 minute"><i data-icon="minus"></i></button>
+                  <span>adjust</span>
+                  <button class="mini-btn" id="tmPlus" title="+1 minute"><i data-icon="plus"></i></button>
+                </div>
+                <div class="tm-actions">
+                  <button class="pill-btn primary" id="tmStart"><i data-icon="play"></i><span>Start</span></button>
+                  <button class="pill-btn" id="tmReset" title="Reset"><i data-icon="reset"></i></button>
+                </div>
+                <div class="tm-foot">
+                  <span class="tm-sessions" id="tmSessions">0 focus sessions today</span>
+                  <button class="chip quiet" id="tmSilence" title="Hold notification pop-ups while you focus"><i data-icon="bellOff"></i>Quiet</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card notes-card">
+              <div class="card-title"><i data-icon="pen"></i>Quick notes<span class="muted" id="notesCount"></span></div>
+              <textarea id="notes" spellcheck="false" placeholder="Jot something down… it saves automatically."></textarea>
+            </div>
+          </section>
+
+          <!-- SYSTEM -->
+          <section class="page" data-page="system">
+            <div class="sys-col">
+              <div class="card stat-card">
+                <div class="stat-head"><span><i data-icon="cpu"></i>CPU</span><b id="cpuVal">--%</b></div>
+                <svg class="spark" id="cpuSpark" viewBox="0 0 100 30" preserveAspectRatio="none"></svg>
+                <div class="stat-sub" id="cpuName"></div>
+              </div>
+              <div class="card stat-card">
+                <div class="stat-head"><span><i data-icon="memory"></i>Memory</span><b id="ramVal">--%</b></div>
+                <svg class="spark ram" id="ramSpark" viewBox="0 0 100 30" preserveAspectRatio="none"></svg>
+                <div class="stat-sub" id="ramSub"></div>
+              </div>
+            </div>
+
+            <div class="card controls-card" id="controlsCard">
+              <div class="ctl-row">
+                <button class="icon-btn soft" id="muteBtn" title="Mute"><i data-icon="volume"></i></button>
+                <div class="slider-wrap">
+                  <div class="slider-label"><span>Volume <button class="mixer-btn" id="mixerBtn" title="Per-app volume"><i data-icon="mixer"></i>Apps</button></span><b id="volVal">--</b></div>
+                  <input type="range" id="volSlider" min="0" max="100" value="0">
+                </div>
+              </div>
+              <div class="ctl-row" id="brightRow">
+                <span class="icon-btn soft static"><i data-icon="sun"></i></span>
+                <div class="slider-wrap">
+                  <div class="slider-label"><span>Brightness</span><b id="brtVal">--</b></div>
+                  <input type="range" id="brtSlider" min="0" max="100" value="0">
+                </div>
+              </div>
+              <div class="batt-row" id="battRow">
+                <div class="batt-icon" id="battIcon"><span class="batt-fill" id="battFill"></span><i data-icon="bolt" class="batt-bolt"></i></div>
+                <div>
+                  <div class="batt-pct" id="battPct">--%</div>
+                  <div class="stat-sub" id="battSub">Battery</div>
+                </div>
+                <button class="mic-pill" id="micPill" title="Mute microphone (Ctrl+Alt+M)"><i data-icon="mic"></i><span>Mic on</span></button>
+              </div>
+              <div class="mixer" id="mixer">
+                <div class="mixer-head"><span><i data-icon="mixer"></i>App volume</span><button class="mini-btn" id="mixerClose" title="Back"><i data-icon="x"></i></button></div>
+                <div class="mixer-list" id="mixerList"></div>
+              </div>
+            </div>
+
+            <div class="card net-card">
+              <div class="stat-head"><span><i data-icon="wifi"></i>Network</span><span class="stat-sub" id="netName"></span></div>
+              <div class="net-speeds">
+                <div class="net-rx"><span class="lbl"><i data-icon="arrowDown"></i>Download</span><b id="netRx">--</b></div>
+                <div class="net-tx"><span class="lbl"><i data-icon="arrowUp"></i>Upload</span><b id="netTx">--</b></div>
+              </div>
+              <svg class="spark net" id="netSpark" viewBox="0 0 100 30" preserveAspectRatio="none"></svg>
+              <div class="stat-sub" id="netTotal">Measuring…</div>
+            </div>
+          </section>
+
+          <!-- APPS / LAUNCHPAD -->
+          <section class="page" data-page="apps">
+            <div class="card apps-card" id="appsCard">
+              <div class="card-title"><i data-icon="grid"></i>Launchpad<span class="muted">drop apps, files or links here · right-click to remove</span>
+                <button class="pill-btn small right" id="appAddBtn"><i data-icon="plus"></i><span>Add</span></button>
+              </div>
+              <div class="apps-grid" id="appsGrid"></div>
+              <form class="app-form" id="appForm" autocomplete="off">
+                <div class="app-form-title">Add a shortcut</div>
+                <label><span>Link or app</span>
+                  <span class="app-form-row">
+                    <input type="text" id="appTarget" placeholder="https://youtube.com  or  C:\…\app.exe">
+                    <button type="button" class="pill-btn small" id="appBrowse"><i data-icon="folder"></i><span>Browse</span></button>
+                  </span>
+                </label>
+                <label><span>Name <em>(optional)</em></span><input type="text" id="appName" placeholder="YouTube"></label>
+                <div class="app-form-actions">
+                  <span class="set-hint" id="appHint"></span>
+                  <button type="button" class="pill-btn small" id="appCancel">Cancel</button>
+                  <button type="submit" class="pill-btn small primary" id="appSave">Add shortcut</button>
+                </div>
+              </form>
+            </div>
+          </section>
+
+          <!-- ALERTS / NOTIFICATIONS -->
+          <section class="page" data-page="alerts">
+            <div class="card alerts-card">
+              <div class="card-title"><i data-icon="bell"></i>Notifications<span class="muted" id="alertsSub"></span>
+                <button class="mini-btn right" id="alertsCenter" title="Open Windows notification centre"><i data-icon="external"></i></button>
+                <button class="mini-btn" id="alertsClear" title="Clear list"><i data-icon="trash"></i></button>
+              </div>
+              <div class="alerts-list" id="alertsList"></div>
+            </div>
+          </section>
+
+          <!-- SHELF -->
+          <section class="page" data-page="shelf">
+            <div class="card shelf-card" id="shelfZone">
+              <div class="card-title"><i data-icon="tray"></i>Shelf
+                <button class="pill-btn small right phone-btn" id="phoneBtn" title="Send files from your phone"><i data-icon="phone"></i><span>Phone</span></button>
+                <button class="mini-btn" id="shelfClear" title="Clear shelf"><i data-icon="trash"></i></button>
+              </div>
+              <div class="shelf-grid" id="shelfGrid"></div>
+              <div class="shelf-empty" id="shelfEmpty">
+                <i data-icon="download"></i>
+                <span>Drop files here<br>to keep them handy</span>
+              </div>
+            </div>
+            <div class="card recent-card">
+              <div class="card-title"><i data-icon="clock"></i>Recent</div>
+              <div class="recent-list" id="recentList"></div>
+            </div>
+            <div class="card clip-card">
+              <div class="card-title"><i data-icon="clipboard"></i>Clipboard<span class="muted">click to copy</span>
+                <button class="mini-btn right" id="clipClear" title="Clear history"><i data-icon="trash"></i></button>
+              </div>
+              <div class="clip-list" id="clipList"></div>
+            </div>
+            <div class="card phone-panel" id="phonePanel">
+              <div class="phone-warn" id="phoneWarn">
+                <div class="pw-icon"><i data-icon="lock"></i></div>
+                <div class="pw-body">
+                  <b>Before you connect a phone</b>
+                  <ul>
+                    <li><em>Use only your own home or office Wi-Fi.</em> Never café, airport, hotel or other public networks.</li>
+                    <li>While it's on, <em>anyone on the same Wi-Fi who has the QR link</em> can send files to this PC.</li>
+                    <li>The transfer is <em>not encrypted</em>; someone snooping on the network could see the files.</li>
+                    <li>Files go to <em>Downloads\NotchMine Phone Drop</em>. Don't open files you didn't send yourself.</li>
+                    <li>Windows may ask about the firewall: allow <em>Private networks</em> only. It switches off after 10 idle minutes.</li>
+                  </ul>
+                  <div class="pw-actions">
+                    <label class="pw-skip"><input type="checkbox" id="phoneWarnSkip"> Don't show this again</label>
+                    <button class="pill-btn small" id="phoneWarnCancel">Cancel</button>
+                    <button class="pill-btn small primary" id="phoneWarnOk">I understand, start</button>
+                  </div>
+                </div>
+              </div>
+              <div class="phone-qr"><img id="phoneQr" alt=""></div>
+              <div class="phone-info">
+                <b><i data-icon="phone"></i>Send files from your phone</b>
+                <ol>
+                  <li>Connect your phone to the <em id="phoneNet">same Wi-Fi</em> as this PC</li>
+                  <li>Point the phone camera at the code and open the link</li>
+                  <li>Tap <em>Choose files</em>; they land on the Shelf</li>
+                </ol>
+                <div class="phone-status" id="phoneStatus">Starting…</div>
+                <div class="phone-recv" id="phoneRecv"><div class="pr-top"><span id="prName"></span><span id="prPct"></span></div><div class="pr-bar"><i id="prBar"></i></div><div class="pr-sub" id="prSub"></div></div>
+                <div class="phone-note">Only devices on your network that have this one-time code can send. It switches off when you press Stop, or after 10 minutes idle.</div>
+              </div>
+              <button class="pill-btn small phone-stop" id="phoneStop"><i data-icon="x"></i><span>Stop</span></button>
+            </div>
+          </section>
+
+          <!-- SETTINGS -->
+          <section class="page" data-page="settings">
+            <div class="card settings-card">
+              <nav class="set-nav" id="setNav">
+                <button class="active" data-sec="general"><i data-icon="gear"></i><span>General</span></button>
+                <button data-sec="look"><i data-icon="palette"></i><span>Appearance</span></button>
+                <button data-sec="widgets"><i data-icon="grid"></i><span>Widgets</span></button>
+                <button data-sec="live"><i data-icon="sparkle"></i><span>Live</span></button>
+                <button data-sec="party"><i data-icon="music"></i><span>Party</span></button>
+                <button data-sec="deskeq"><i data-icon="mixer"></i><span>Equalizer</span></button>
+                <button data-sec="side"><i data-icon="sideways"></i><span>Side mode</span></button>
+              </nav>
+
+              <div class="set-body">
+                <!-- General -->
+                <div class="set-sec active" data-sec="general">
+                  <div class="set-col">
+                    <label class="set-row"><span>Launch at login</span><input type="checkbox" class="switch" data-setting="launchAtLogin"></label>
+                    <label class="set-row"><span>Hide in full-screen apps</span><input type="checkbox" class="switch" data-setting="hideInFullscreen"></label>
+                    <label class="set-row"><span>24-hour clock</span><input type="checkbox" class="switch" data-setting="use24h"></label>
+                    <label class="set-row"><span>Show seconds</span><input type="checkbox" class="switch" data-setting="showSeconds"></label>
+                    <div class="set-row"><span class="muted">NotchMine</span><button class="pill-btn danger small" id="quitBtn"><i data-icon="power"></i><span>Quit</span></button></div>
+                  </div>
+                  <div class="set-col">
+                    <div class="set-row" title="How quickly the notch opens when the mouse touches it (or only on click)"><span>Open</span>
+                      <span class="seg" data-seg="openDelay">
+                        <button data-v="60">Fast</button><button data-v="140">Normal</button><button data-v="350">Slow</button><button data-v="-1">Click</button>
+                      </span>
+                    </div>
+                    <label class="set-row" title="Scroll = volume · swipe sideways = skip · double-click = play/pause · middle-click = mute"><span>Gestures on the notch</span><input type="checkbox" class="switch" data-setting="gestures"></label>
+                    <div class="set-row"><span>Shape</span>
+                      <span class="seg" data-seg="shape" data-type="str">
+                        <button data-v="notch" title="Glued to the top edge of the screen">Notch</button><button data-v="island" title="A floating pill just below the top edge">Island</button>
+                      </span>
+                    </div>
+                    <div class="set-row" title="Or drag the pill (or the open panel's top bar). Island shape can go anywhere on the screen."><span>Position</span>
+                      <span class="seg" data-seg="posX">
+                        <button data-v="0">Left</button><button data-v="0.5">Center</button><button data-v="1">Right</button>
+                      </span>
+                    </div>
+                    <div class="set-row" id="screenRow"><span>Screen</span><span class="seg" data-seg="displayId" id="screenSeg"></span></div>
+                  </div>
+                </div>
+
+                <!-- Appearance -->
+                <div class="set-sec" data-sec="look">
+                  <div class="set-col">
+                    <div class="set-label">Style</div>
+                    <div class="themes" id="themePick">
+                      <button data-theme="midnight"><span class="tp tp-midnight"></span>Midnight</button>
+                      <button data-theme="graphite"><span class="tp tp-graphite"></span>Graphite</button>
+                      <button data-theme="glass"><span class="tp tp-glass"></span>Glass</button>
+                      <button data-theme="aurora"><span class="tp tp-aurora"></span>Aurora</button>
+                    </div>
+                    <div class="set-row"><span>Size</span>
+                      <span class="seg" data-seg="scale">
+                        <button data-v="0.9">S</button><button data-v="1">M</button><button data-v="1.15">L</button><button data-v="1.3">XL</button>
+                      </span>
+                    </div>
+                    <div class="set-row"><span>Music icon effect</span>
+                      <span class="seg fx-pick" id="fxPick">
+                        <button data-fx="sun" title="The icon glows and sheds sparks like a sun">Sun rays</button><button data-fx="orb" title="A burning holographic globe, from Friday">Orb</button><button data-fx="none" title="Plain album art">Off</button>
+                      </span>
+                    </div>
+                    <label class="set-row"><span>Real audio visualizer</span><input type="checkbox" class="switch" data-setting="visualizer"></label>
+                  </div>
+                  <div class="set-col">
+                    <div class="set-label">Accent colour</div>
+                    <div class="accents" id="accentPick">
+                      <button data-accent="auto" title="From album art" class="acc-auto">A</button>
+                      <button data-accent="purple" title="Purple"></button>
+                      <button data-accent="blue" title="Blue"></button>
+                      <button data-accent="teal" title="Teal"></button>
+                      <button data-accent="green" title="Green"></button>
+                      <button data-accent="orange" title="Orange"></button>
+                      <button data-accent="pink" title="Pink"></button>
+                      <button data-accent="red" title="Red"></button>
+                      <label class="acc-custom" title="Any colour you like"><input type="color" id="accentCustom"><span>+</span></label>
+                    </div>
+                    <div class="set-label" title="Equalizer bars, spectrum, glow, orb and sparks">Visualizer colours</div>
+                    <div class="viz-pick" id="vizPick">
+                      <button data-viz="accent" title="Follow the accent colour">A</button>
+                      <button data-viz="rainbow" title="Rainbow"></button>
+                      <button data-viz="sunset" title="Sunset"></button>
+                      <button data-viz="ocean" title="Ocean"></button>
+                      <button data-viz="neon" title="Neon"></button>
+                      <button data-viz="fire" title="Fire"></button>
+                      <button data-viz="aurora" title="Aurora"></button>
+                      <button data-viz="custom" title="Your own mix" class="viz-custom-btn"><i data-icon="palette"></i></button>
+                    </div>
+                    <div class="viz-mixer" id="vizMixer">
+                      <span class="muted">Mix</span>
+                      <input type="color" class="vz-col" data-i="0">
+                      <input type="color" class="vz-col" data-i="1">
+                      <input type="color" class="vz-col" data-i="2">
+                      <span class="seg vz-count" id="vizCount"><button data-n="1">1</button><button data-n="2">2</button><button data-n="3">3</button></span>
+                    </div>
+                    <div class="set-note" id="vizNote" hidden></div>
+                  </div>
+                </div>
+
+                <!-- Widgets -->
+                <div class="set-sec" data-sec="widgets">
+                  <div class="set-col">
+                    <label class="set-row city-row">
+                      <span>Weather city</span>
+                      <span class="city-input">
+                        <input type="text" id="setCity" placeholder="City name">
+                        <button class="pill-btn primary small" id="setCitySave">Save</button>
+                      </span>
+                    </label>
+                    <div class="set-hint" id="cityHint"></div>
+                    <div class="set-credit">Weather data by <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo.com</a> (CC BY 4.0)</div>
+                    <label class="set-row"><span>Focus / break minutes</span>
+                      <span class="num-pair">
+                        <input type="number" id="setWork" min="1" max="180">
+                        <input type="number" id="setBreak" min="1" max="60">
+                      </span>
+                    </label>
+                    <label class="set-row"><span>Clipboard history</span><input type="checkbox" class="switch" data-setting="clipboardHistory"></label>
+                  </div>
+                  <div class="set-col">
+                    <label class="set-row"><span>Show Windows notifications</span><input type="checkbox" class="switch" data-setting="notifications"></label>
+                    <label class="set-row" title="Notifications are read from Windows Action Center on this PC only. Nothing leaves your computer."><span>Hide message text in pop-ups</span><input type="checkbox" class="switch" data-setting="notifHideText"></label>
+                    <div class="set-label" title="Shown in the pill when no music is playing">Idle pill shows</div>
+                    <div class="stat-pick wrap" id="idlePick">
+                      <button data-stat="date">Date</button><button data-stat="weather">Weather</button><button data-stat="cpu">CPU</button><button data-stat="ram">RAM</button><button data-stat="net">Network</button><button data-stat="battery">Battery</button><button data-stat="alerts">Alerts</button>
+                    </div>
+                    <label class="set-row" title="Only sun/moon, time, date and weather (plus unread alerts and battery when unplugged). The rest shows while the mouse is on the pill."><span>Minimal (details on hover)</span><input type="checkbox" class="switch" data-setting="idleMinimal"></label>
+                  </div>
+                </div>
+
+                <!-- Side mode -->
+                <div class="set-sec" data-sec="side">
+                  <div class="set-col">
+                    <label class="set-row"><span>Side mode</span><input type="checkbox" class="switch" data-setting="sideMode"></label>
+                    <div class="set-note">While one of these apps is maximized and in front, the notch moves to the middle of the right edge and turns sideways, so it never covers browser tabs. Hover it to open the panel. It goes back to its usual spot as soon as that window is minimized, made smaller or closed, or you switch to another app.</div>
+                  </div>
+                  <div class="set-col">
+                    <div class="set-label">Apps that send it to the side</div>
+                    <div class="side-list" id="sideList"></div>
+                    <div class="set-label small">Recently used: click to add</div>
+                    <div class="side-list recent" id="sideRecent"></div>
+                  </div>
+                </div>
+
+                <!-- Desktop equalizer -->
+                <div class="set-sec" data-sec="deskeq">
+                  <div class="set-col">
+                    <label class="set-row"><span>Desktop equalizer</span><input type="checkbox" class="switch" data-setting="deskEq"></label>
+                    <div class="set-row"><span>Position</span>
+                      <span class="seg" data-seg="deskEqPos" data-type="str">
+                        <button data-v="above" title="Sits on top of the taskbar">Above taskbar</button><button data-v="bottom" title="Starts at the very bottom, over the taskbar">Screen bottom</button>
+                      </span>
+                    </div>
+                    <div class="set-row"><span>Screens</span>
+                      <span class="seg" data-seg="deskEqScreens" data-type="str">
+                        <button data-v="notch">Notch's</button><button data-v="all">All</button>
+                      </span>
+                    </div>
+                    <label class="set-row"><span>Mirror (bass in the middle)</span><input type="checkbox" class="switch" data-setting="deskEqMirror"></label>
+                  </div>
+                  <div class="set-col">
+                    <div class="slider-set">
+                      <div class="slider-label"><span>Intensity</span><b id="eqIntVal">60%</b></div>
+                      <input type="range" min="0" max="100" data-range="deskEqIntensity" data-out="eqIntVal">
+                    </div>
+                    <div class="slider-set">
+                      <div class="slider-label"><span>Height</span><b id="eqHVal">45%</b></div>
+                      <input type="range" min="0" max="100" data-range="deskEqHeight" data-out="eqHVal">
+                    </div>
+                    <div class="set-note">See-through and click-through: it never gets in the way of your mouse. It shows only while music plays and hides in full-screen apps.</div>
+                  </div>
+                </div>
+
+                <!-- Party mode -->
+                <div class="set-sec" data-sec="party">
+                  <div class="set-col">
+                    <div class="set-row"><span>Screens</span>
+                      <span class="seg" data-seg="partyScreens" data-type="str">
+                        <button data-v="all" title="Every connected screen">All</button><button data-v="notch" title="Only the screen the notch is on">Notch's</button><button data-v="main" title="Only the main screen">Main</button>
+                      </span>
+                    </div>
+                    <div class="set-row"><span>Theme</span>
+                      <span class="seg" data-seg="partyTheme" data-type="str">
+                        <button data-v="club" title="Big orb or sun with club lights">Club</button><button data-v="synthwave" title="Neon sunset, dancing mountains, rushing grid">Synthwave</button><button data-v="warp" title="Hyperspace: stars and rings rush past">Warp</button>
+                      </span>
+                    </div>
+                    <label class="set-row"><span>Keep the screen awake</span><input type="checkbox" class="switch" data-setting="partyAwake"></label>
+                    <div class="set-note">Colours follow <em>Visualizer colours</em>. Move the mouse for controls · Esc leaves · Ctrl+Alt+P anywhere.</div>
+                    <button class="pill-btn primary party-go" id="partyGo"><i data-icon="sparkle"></i><span>Start party</span></button>
+                  </div>
+                  <div class="set-col">
+                    <div class="set-label">Lighting <span class="muted">(Club theme)</span></div>
+                    <label class="set-row"><span>Club light beams</span><input type="checkbox" class="switch" data-light="beams"></label>
+                    <label class="set-row"><span>Pulsing edge glow</span><input type="checkbox" class="switch" data-light="glow"></label>
+                    <label class="set-row"><span>Floating particles</span><input type="checkbox" class="switch" data-light="particles"></label>
+                    <label class="set-row"><span>Blurred album art</span><input type="checkbox" class="switch" data-light="albumArt"></label>
+                  </div>
+                </div>
+
+                <!-- Live activities -->
+                <div class="set-sec" data-sec="live">
+                  <div class="set-col">
+                    <label class="set-row"><span>Synced lyrics</span><input type="checkbox" class="switch" data-setting="lyrics"></label>
+                    <label class="set-row"><span>Lyrics in the pill</span><input type="checkbox" class="switch" data-setting="lyricsInPill"></label>
+                    <label class="set-row"><span>Camera / mic in-use dots</span><input type="checkbox" class="switch" data-setting="privacyDots"></label>
+                    <label class="set-row"><span>Quiet pop-ups while focusing</span><input type="checkbox" class="switch" data-setting="focusSilence"></label>
+                  </div>
+                  <div class="set-col">
+                    <label class="set-row"><span>Catch screenshots</span><input type="checkbox" class="switch" data-setting="catchScreenshots"></label>
+                    <label class="set-row"><span>Finished downloads</span><input type="checkbox" class="switch" data-setting="trackDownloads"></label>
+                    <label class="set-row"><span>USB, headphones, Caps Lock</span><input type="checkbox" class="switch" data-setting="devicePopups"></label>
+                    <div class="set-note">Lyrics come from lrclib.net (free, no account); only the song title and artist are sent. Lyrics belong to their songwriters and publishers.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <script src="icons.js"></script>
+  <script src="app.js"></script>
+  <script src="extras.js"></script>
+  <script src="live.js"></script>
+  <script src="boot.js"></script>
+</body>
+</html>

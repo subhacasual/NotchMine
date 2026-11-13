@@ -1,0 +1,54 @@
+{
+  "name": "notchmine",
+  "productName": "NotchMine",
+  "version": "1.0.0",
+  "description": "A dynamic notch for Windows with media controls, widgets and live activities.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node scripts/start.js",
+    "dist": "electron-builder --win portable nsis"
+  },
+  "author": "subhacasual",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/subhacasual/NotchMine.git"
+  },
+  "homepage": "https://github.com/subhacasual/NotchMine#readme",
+  "bugs": {
+    "url": "https://github.com/subhacasual/NotchMine/issues"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.notchmine.app",
+    "productName": "NotchMine",
+    "files": [
+      "src/**/*",
+      "bridge/**/*",
+      "assets/**/*",
+      "package.json",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "asarUnpack": [
+      "bridge/**/*"
+    ],
+    "win": {
+      "icon": "assets/icon.png",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  }
+}

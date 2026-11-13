@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src 'self' data:">
+  <title>NotchMine Party</title>
+  <link rel="stylesheet" href="party.css">
+</head>
+<body class="idle">
+  <img id="bgArt" alt="">
+  <canvas id="fx"></canvas>
+
+  <!-- song toast when a track starts -->
+  <div id="toast"><div id="toastTitle"></div><div id="toastArtist"></div></div>
+
+  <!-- controls: fade in when the mouse moves -->
+  <div id="ui">
+    <div class="top">
+      <div class="chips" id="chips">
+        <span class="chip-label">Theme</span>
+        <button data-theme="club">Club</button>
+        <button data-theme="synthwave">Synthwave</button>
+        <button data-theme="warp">Warp</button>
+        <span class="chip-sep club-only"></span>
+        <span class="chip-label club-only">Lights</span>
+        <button class="club-only" data-light="beams">Beams</button>
+        <button class="club-only" data-light="glow">Glow</button>
+        <button class="club-only" data-light="particles">Particles</button>
+        <button data-light="albumArt">Album art</button>
+        <span class="chip-sep club-only"></span>
+        <span class="chip-label club-only">Centre</span>
+        <button class="club-only" data-fx="orb">Orb</button>
+        <button class="club-only" data-fx="sun">Sun</button>
+      </div>
+      <button class="exit" id="exit" title="Leave party mode (Esc)"><i data-icon="x"></i><span>Exit party</span></button>
+    </div>
+    <div class="now">
+      <div class="art" id="art"></div>
+      <div class="meta">
+        <div class="title" id="title">Nothing playing</div>
+        <div class="artist" id="artist"></div>
+        <div class="prog"><span id="pos">0:00</span><div class="bar" id="bar"><div id="fill"></div></div><span id="dur">0:00</span></div>
+      </div>
+      <div class="ctl">
+        <button id="prev" title="Previous (←)"><i data-icon="prev"></i></button>
+        <button id="play" class="big" title="Play / pause (Space)"><i data-icon="play"></i></button>
+        <button id="next" title="Next (→)"><i data-icon="next"></i></button>
+      </div>
+    </div>
+  </div>
+
+  <script src="icons.js"></script>
+  <script src="party.js"></script>
+</body>
+</html>
