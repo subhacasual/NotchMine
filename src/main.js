@@ -49,6 +49,7 @@ const DEFAULTS = {
   focusSilence: true,       // hold notification pop-ups during a focus session
   gestures: true,           // swipe = skip, double-click = play/pause, middle-click = mute
   artFx: 'sun',             // music icon effect while playing: 'sun' | 'orb' | 'none' (more can be added)
+  fxSensitivity: 50,        // 0-100: how strongly the sun / orb reacts (sparks, beat bursts, orb spin)
   shape: 'notch',           // 'notch' = glued to the top edge, 'island' = floating pill
   partyScreens: 'all',      // party mode on: 'all' screens | 'notch' (the notch's screen) | 'main'
   partyTheme: 'club',       // 'club' (orb/sun + lights) | 'synthwave' | 'warp'

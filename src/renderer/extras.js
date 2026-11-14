@@ -213,7 +213,7 @@ function applyExtrasUI() {
   const ic = idleStatsCfg();
   document.querySelectorAll('#idlePick [data-stat]').forEach(b => b.classList.toggle('on', !!ic[b.dataset.stat]));
   document.querySelectorAll('[data-range]').forEach(el => {
-    const v = s[el.dataset.range] ?? (el.dataset.range === 'deskEqIntensity' ? 60 : 45);
+    const v = s[el.dataset.range] ?? ({ deskEqIntensity: 60, fxSensitivity: 50 })[el.dataset.range] ?? 45;
     if (document.activeElement !== el) { el.value = v; el.style.setProperty('--p', v + '%'); $(el.dataset.out).textContent = v + '%'; }
   });
   const pl = partyLights();
@@ -697,6 +697,12 @@ function sunFrame(t) {
     const all = na ? sa / na / 255 : 0;
     SUN.lvlPeak = Math.max(all, Math.max(0.3, (SUN.lvlPeak || 0.4) * 0.9985));
     SUN.lvlTarget = clamp(Math.pow(clamp((all - 0.1) / (SUN.lvlPeak - 0.1), 0, 1), 1.4), 0, 1);
+    // vocals: the voice band (300 Hz – 3.4 kHz) against its own slowly fading peak
+    let sv = 0, nv = 0;
+    for (let i = Math.floor(300 / hz); i <= Math.ceil(3400 / hz) && i < data.length; i++) { sv += data[i]; nv++; }
+    const voc = nv ? sv / nv / 255 : 0;
+    SUN.vocPeak = Math.max(voc, Math.max(0.25, (SUN.vocPeak || 0.35) * 0.997));
+    SUN.vocTarget = clamp((voc - 0.12) / (SUN.vocPeak - 0.12), 0, 1);
     // spread the spectrum around the circle (mirrored left/right so it looks natural, not like a dial)
     for (let i = 0; i < N; i++) {
       const k = i < N / 2 ? i : N - 1 - i;
@@ -710,7 +716,13 @@ function sunFrame(t) {
     bass = 0.2 + beat * 0.8;
     for (let i = 0; i < N; i++) band[i] = clamp(0.25 + Math.sin(t / 420 + i * 2.3) * 0.15 + beat * 0.5, 0, 1);
     SUN.lvlTarget = 0.75;
+    SUN.vocTarget = 0.45;
   }
+  // Settings → Music icon effect → Sensitivity: 0 = calm, 50 = default, 100 = reacts to everything
+  const sens = clamp((S.settings.fxSensitivity ?? 50) / 100, 0, 1);
+  const gain = 0.35 + sens * 1.3;            // 0.35 … 1 (default) … 1.65
+  const easy = 1.6 - sens * 1.2;             // beat threshold: 1.6× stricter … 1 … 0.4× (lighter beats count)
+  SUN.vocal = (SUN.vocal ?? 0.4) + ((SUN.vocTarget ?? 0.4) - (SUN.vocal ?? 0.4)) * 0.12;
   SUN.bass += (bass - SUN.bass) * (bass > SUN.bass ? 0.55 : 0.1);
   SUN.level = (SUN.level ?? 0.5) + ((SUN.lvlTarget ?? 0.5) - (SUN.level ?? 0.5)) * 0.08;
   const lvl = SUN.level;
@@ -721,8 +733,9 @@ function sunFrame(t) {
   }
 
   // ---- a kick drum "fires" the sun: light streaks fly out, a soft shock-ring expands, ray shapes reshuffle
+  const maxBeams = Math.round(60 + 80 * sens);
   const fire = (count, power) => {
-    for (let j = 0; j < count && SUN.beams.length < 90; j++) {
+    for (let j = 0; j < count && SUN.beams.length < maxBeams; j++) {
       SUN.beams.push({
         a: Math.random() * Math.PI * 2, r: 12,
         v: (0.07 + Math.random() * 0.1) * (0.7 + power * 0.6),
@@ -732,18 +745,32 @@ function sunFrame(t) {
       });
     }
   };
-  // a beat fires a burst (now triggers on lighter beats too)
-  const kick = bass - SUN.prevBass > 0.12 && bass > 0.35 && t - SUN.lastBeat > 95;
+  // a beat fires a burst (the sensitivity decides how light a beat may be and how big the burst is)
+  const kick = bass - SUN.prevBass > 0.12 * easy && bass > 0.35 * easy && t - SUN.lastBeat > 95;
   SUN.prevBass = bass;
   if (kick) {
     SUN.lastBeat = t;
-    fire(4 + Math.round(bass * 8 * (0.4 + lvl)), bass);
-    if (bass > 0.6 && SUN.rings.length < 3) SUN.rings.push({ r: 13, life: 1 });
+    SUN.beats = (SUN.beats || []).filter(x => t - x < 4000);
+    SUN.beats.push(t);
+    fire(Math.round((4 + bass * 8 * (0.4 + lvl)) * gain), bass * (0.6 + 0.4 * gain));
+    if (bass > 0.6 * Math.min(1.2, easy) && SUN.rings.length < 3) SUN.rings.push({ r: 13, life: 1 });
     for (let i = 0; i < N; i++) SUN.jitT[i] = 0.5 + Math.random() * 0.7;
+    // the orb lurches forward on every beat, so fast dance tracks visibly spin "with" the kicks
+    SUN.spinKick = Math.min(4, (SUN.spinKick || 0) + (0.5 + bass) * 1.1 * gain);
   }
-  // …and between beats it keeps shedding sparks, more when the music is loud
-  SUN.emitAcc = (SUN.emitAcc || 0) + dt * (0.004 + 0.03 * lvl * (0.4 + SUN.bass));
+  // …and between beats it keeps shedding sparks: more when the music is loud, the bass heavy or a voice is singing
+  SUN.emitAcc = (SUN.emitAcc || 0) + dt * (0.004 + 0.03 * lvl * (0.4 + SUN.bass) + 0.012 * lvl * SUN.vocal) * Math.pow(gain, 1.5);
   while (SUN.emitAcc >= 1) { SUN.emitAcc -= 1; fire(1, lvl * 0.7); }
+
+  // ---- how fast the orb turns follows the song's mood: beats per second (tempo), vocals, bass, loudness.
+  // A slow, soft song turns it gently; a fast electronic track spins it up and kicks it on every beat.
+  const recent = (SUN.beats || []).filter(x => t - x < 4000).length / 4;        // kicks per second, last 4 s
+  SUN.tempo = (SUN.tempo || 0) + (recent - (SUN.tempo || 0)) * 0.03;
+  const drive = clamp(0.45 * Math.min(1, SUN.tempo / 2.5) + 0.25 * SUN.vocal + 0.3 * SUN.bass, 0, 1) * Math.sqrt(lvl);
+  const spinTarget = 0.15 + drive * 1.7 * gain;                                   // radians per second
+  SUN.spin = (SUN.spin ?? 0.3) + (spinTarget - (SUN.spin ?? 0.3)) * 0.035;
+  SUN.spinKick = (SUN.spinKick || 0) * Math.exp(-dt / 230);
+  SUN.spinRate = SUN.spin + SUN.spinKick;
 
   // ---- place the canvas over the art (window coords)
   const art = $('cArt');
@@ -935,10 +962,11 @@ function drawOrb(ctx, o, b, lvl, glow, dt, t) {
   const ORB_MAIN = vizStr(0.5);          // structure + halo: palette middle (accent purple by default)
   const ORB_HOT = vizHot(0.5, 0.6);      // the burning core: the same colour, heated towards white
   const R = ORB_R * (1 + b * 0.08);
-  // spin: calm idle turn, faster with the beat
-  ORB.yaw += dt / 1000 * (0.35 + b * 1.4);
-  ORB.inner -= dt / 1000 * (0.6 + b * 1.6);
-  ORB.orbit += dt / 1000 * (0.25 + b * 0.8);
+  // spin: set by the song's mood + the sensitivity (see SUN.spinRate in sunFrame)
+  const rate = SUN.spinRate ?? (0.35 + b * 1.4);
+  ORB.yaw += dt / 1000 * rate;
+  ORB.inner -= dt / 1000 * (0.25 + rate * 1.3);
+  ORB.orbit += dt / 1000 * (0.1 + rate * 0.6);
   const pitch = 0.38 + Math.sin(t / 2600) * 0.08;
   const mats = [ORB.yaw, ORB.inner, ORB.orbit].map(yaw => {
     const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);

@@ -18,7 +18,7 @@ Windows 10 / 11 · Electron · Free and open source (MIT)
 
 - 🎵 **Music player for everything:** Spotify, YouTube in any browser, Media Player, VLC, Apple Music… Shows album art, a seekable progress bar, a real audio visualizer and synced lyrics.
 - ✨ **Live activities in the pill:** pop-ups for song changes, volume, notifications, screenshots, downloads, USB drives, headphones, battery and timers.
-- 🪐 **Music icon effects:** the album art can glow and throw sparks like a sun, or turn into a burning holographic orb, in time with the beat.
+- 🪐 **Music icon effects:** the album art can glow and throw sparks like a sun, or turn into a burning holographic orb, in time with the beat. The orb's spin follows the song's tempo, bass and vocals, and an **Effect sensitivity** slider sets how wildly it reacts.
 - 🎉 **Party mode:** a full-screen light show (Club, Synthwave or Warp) driven by whatever is playing, on one screen or all of them.
 - 📊 **Desktop equalizer:** see-through, click-through bars that dance along the bottom of your screen while you work.
 - 🧭 **Side mode:** when a chosen app (e.g. Chrome) is maximized, the notch moves to the right edge and turns vertical, so it never covers your tabs.
