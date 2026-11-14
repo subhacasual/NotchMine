@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('notch', {
   mixerMute: pid => ipcRenderer.send('mixer-mute', pid),
   micToggle: () => ipcRenderer.send('mic-toggle'),
   lyrics: q => ipcRenderer.invoke('lyrics', q),
+  artwork: q => ipcRenderer.invoke('artwork', q),
   ocr: p => ipcRenderer.invoke('ocr', p),
   captureSave: p => ipcRenderer.invoke('capture-save', p),
   captureCopy: p => ipcRenderer.send('capture-copy', p),

@@ -309,15 +309,26 @@ function Get-Session {
   return $cur
 }
 
+$asStreamForRead = $null; $contentTypeProp = $null
+try {
+  $asStreamForRead = [System.IO.WindowsRuntimeStreamExtensions].GetMethod('AsStreamForRead', [Type[]]@([Windows.Storage.Streams.IInputStream]))
+  $contentTypeProp = [Windows.Storage.Streams.IContentTypeProvider].GetProperty('ContentType')
+} catch { Log "artwork reader init failed: $_" }
+
 function Read-Thumbnail($props) {
   try {
     if ($null -eq $props.Thumbnail) { return $null }
     $stream = Await ($props.Thumbnail.OpenReadAsync()) ([Windows.Storage.Streams.IRandomAccessStreamWithContentType])
-    $net = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($stream)
+    # Chromium (Chrome / Edge / YouTube Music app) hands back a bare COM object that PowerShell can't
+    # convert to a stream, so call through the interfaces with reflection (works for every player)
+    $net = $script:asStreamForRead.Invoke($null, @($stream))
     $ms = New-Object System.IO.MemoryStream
     $net.CopyTo($ms)
     $net.Dispose()
-    $type = $stream.ContentType
+    # browsers can hand out an empty stream while the artwork is still downloading: that's "no art yet"
+    if ($ms.Length -lt 64) { return $null }
+    $type = $null
+    try { $type = $script:contentTypeProp.GetValue($stream) } catch {}
     if ([string]::IsNullOrEmpty($type)) { $type = 'image/png' }
     return "data:$type;base64," + [Convert]::ToBase64String($ms.ToArray())
   } catch { return $null }
@@ -328,6 +339,7 @@ $lastThumb = $null
 $thumbSeq = 0
 $thumbSentSeq = -1
 $thumbRetries = 0
+$thumbRecheck = 0
 $lastMediaJson = ''
 
 function Poll-Media([bool]$force) {
@@ -346,12 +358,18 @@ function Poll-Media([bool]$force) {
         $script:lastThumb = Read-Thumbnail $props
         $script:thumbSeq++
         $script:thumbRetries = 0
-        # Some players publish artwork a moment after the title; keep retrying for a bit
+        $script:thumbRecheck = 6
+        # Some players (browsers / YouTube especially) publish artwork well after the title; keep retrying (~15 s)
         if ($null -eq $script:lastThumb) { $script:lastKey = "$key|nothumb" }
-      } elseif ($script:lastKey.EndsWith('|nothumb') -and $script:thumbRetries -lt 8) {
+      } elseif ($script:lastKey.EndsWith('|nothumb') -and $script:thumbRetries -lt 25) {
         $script:thumbRetries++
         $t = Read-Thumbnail $props
         if ($t) { $script:lastThumb = $t; $script:lastKey = $key; $script:thumbSeq++ }
+      } elseif ($script:thumbRecheck -gt 0) {
+        # right after a track change some players still hand out the previous song's art for a moment
+        $script:thumbRecheck--
+        $t = Read-Thumbnail $props
+        if ($t -and $t -ne $script:lastThumb) { $script:lastThumb = $t; $script:thumbSeq++ }
       }
       $c = $pb.Controls
       $out = @{

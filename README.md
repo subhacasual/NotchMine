@@ -51,7 +51,7 @@ Windows 10 / 11 · Electron · Free and open source (MIT)
 ### Option 1: download (easiest)
 1. Go to the [**Releases**](../../releases) page and download the latest `NotchMine x.y.z.exe` (portable, nothing to install).
 2. Run it. The notch appears at the top of your screen and an icon appears in the system tray.
-3. Optional: Settings → General → **Launch at login**.
+3. NotchMine starts with Windows automatically. To turn that off, use Settings → General → **Launch at login** or the tray menu. If you use the portable `.exe`, keep it in a fixed folder, for example `C:\Apps\NotchMine`, rather than in Downloads.
 
 > **"Windows protected your PC"?** The app isn't code-signed, so SmartScreen warns about it. Click **More info → Run anyway**.
 
@@ -162,6 +162,7 @@ NotchMine runs on your PC. It has no account, no analytics and no tracking. Only
 | Weather | Your city's coordinates | [Open-Meteo](https://open-meteo.com) (free, no key) |
 | City search | The city name you type | Open-Meteo geocoding |
 | Synced lyrics *(can be switched off)* | Song title, artist, album, length | [LRCLIB](https://lrclib.net) (free, no key) |
+| Missing album art *(can be switched off; only when the player shares none)* | Song title, artist | [iTunes Search API](https://performance-partners.apple.com/search-api) (free, no key) |
 | Website shortcuts | A request for that site's own favicon | The site you added |
 
 Everything else stays on your PC:
@@ -243,6 +244,7 @@ src/
                    desktop equalizer, screenshots/downloads watchers, OCR and phone-drop wiring
   preload.js       The safe bridge between the UI and the main process
   lyrics.js        LRCLIB lookup + cache
+  artwork.js       Album art lookup (iTunes Search) for players that share none
   phone.js         Phone → PC upload server (chunked, resumable) and the phone web page
   renderer/
     index.html     The notch UI (pill, pop-ups, panel)
@@ -277,6 +279,7 @@ Issues and pull requests are welcome. If you report a bug, please include your W
 - Many line icons are adapted from [Feather Icons](https://feathericons.com) (MIT) and [Lucide](https://lucide.dev) (ISC). The weather, sky and party glyphs, the app icon and the tray icon are original.
 - Weather data by [Open-Meteo.com](https://open-meteo.com), licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The free API is for non-commercial use.
 - Synced lyrics from [LRCLIB](https://lrclib.net). Lyrics belong to their songwriters and publishers.
+- Missing album art from the [iTunes Search API](https://performance-partners.apple.com/search-api). Artwork belongs to its owners.
 - QR codes by [node-qrcode](https://github.com/soldair/node-qrcode) (MIT).
 
 NotchMine is an independent project. It is not affiliated with Apple or Microsoft. "Dynamic Island" is a trademark of Apple Inc. Other app names are trademarks of their owners and are used only to identify those apps. Screenshots use a made-up demo song.

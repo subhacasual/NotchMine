@@ -9,6 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const { spawn, exec } = require('child_process');
 const lyrics = require('./lyrics');
+const artwork = require('./artwork');
 const phone = require('./phone');
 
 // ------------------------------------------------------------------ constants
@@ -39,6 +40,7 @@ const DEFAULTS = {
   notifHideText: false,     // show only the app name in pop-ups
   shortcuts: [],            // [{ id, name, target, icon }]
   lyrics: true,             // fetch synced lyrics from lrclib.net (title/artist only)
+  onlineArtwork: true,      // when a player shares no album art, look it up on iTunes Search (title/artist only)
   lyricsInPill: true,       // show the current lyric line in the collapsed pill
   catchScreenshots: true,   // screenshots / copied images pop into the notch
   trackDownloads: true,     // finished downloads pop into the notch
@@ -496,6 +498,7 @@ function handleBridge(msg) {
       refreshVisibility();
       break;
     case 'media': {
+      if (msg.active) { const label = webAppName(msg.app); if (label) msg.appLabel = label; }
       // keep the artwork in the cache even when the bridge omits it
       const prev = lastState.media;
       const cached = { ...msg };
@@ -511,6 +514,36 @@ function handleBridge(msg) {
       send(msg.type, msg);
       break;
   }
+}
+
+// Installed web apps (YouTube Music, YouTube … installed from Chrome / Edge) all report the browser's
+// id plus "_crx_<app id>". Windows' Start menu knows their real names, so ask it once and remember.
+const webApps = new Map();       // AppUserModelID -> "YouTube Music"
+let webAppsAt = 0;
+function refreshWebApps() {
+  if (Date.now() - webAppsAt < 60000) return;      // at most once a minute (new app installed, …)
+  webAppsAt = Date.now();
+  exec('powershell.exe -NoProfile -NonInteractive -Command "Get-StartApps | Where-Object { $_.AppID -match \'_crx_\' } | ConvertTo-Json -Compress"',
+    { windowsHide: true, timeout: 20000 }, (err, out) => {
+      if (err) return;
+      let list = [];
+      try { list = JSON.parse(out || '[]'); } catch { return; }
+      for (const a of [].concat(list)) {
+        // "YouTube Music (1)": Windows numbers duplicates (several browser profiles)
+        if (a && a.AppID && a.Name) webApps.set(a.AppID.toLowerCase(), String(a.Name).replace(/\s*\(\d+\)$/, ''));
+      }
+      // the song may be paused (no more updates coming): re-send it with its proper name
+      const m = lastState.media;
+      if (m && m.active && !m.appLabel) { const label = webAppName(m.app); if (label) { m.appLabel = label; send('media', m); } }
+    });
+}
+function webAppName(id) {
+  if (!id || !/_crx_/i.test(id)) return null;
+  const key = id.toLowerCase();
+  if (webApps.has(key)) return webApps.get(key);
+  for (const [k, v] of webApps) if (key.startsWith(k) || k.startsWith(key)) return v;
+  refreshWebApps();
+  return null;
 }
 
 function bridgeCmd(cmd) {
@@ -606,6 +639,15 @@ function loadRecentCaptures() {
 
 // Screenshots: Win+Shift+S, PrtScn and copied images all land on the clipboard.
 let lastImageSig = '';
+function imageSig(img) {
+  const { width, height } = img.getSize();
+  return `${width}x${height}:${img.resize({ width: 16, height: 16 }).toBitmap().toString('base64')}`;
+}
+// Whatever image is already on the clipboard when we start was handled by an earlier run: don't
+// turn it into a "new" screenshot again (that brought back items the user had removed).
+function seedImageSig() {
+  try { const img = clipboard.readImage(); if (!img.isEmpty()) lastImageSig = imageSig(img); } catch { /* ignore */ }
+}
 function onClipboardChanged() {
   if (!settings.catchScreenshots) return;
   setTimeout(() => {
@@ -617,7 +659,7 @@ function onClipboardChanged() {
     if (img.isEmpty()) return;
     const { width, height } = img.getSize();
     if (width < 24 || height < 24) return;
-    const sig = `${width}x${height}:${img.resize({ width: 16, height: 16 }).toBitmap().toString('base64')}`;
+    const sig = imageSig(img);
     if (sig === lastImageSig) return;
     lastImageSig = sig;
     fs.mkdirSync(CAPTURE_DIR, { recursive: true });
@@ -741,7 +783,7 @@ function buildTrayMenu() {
 function applyLoginItem(on) {
   settings.launchAtLogin = !!on;
   saveSettings();
-  const opts = { openAtLogin: !!on };
+  const opts = { openAtLogin: !!on, name: 'NotchMine' };
   if (!app.isPackaged) { opts.path = process.execPath; opts.args = [path.resolve(__dirname, '..')]; }
   // the portable build runs from a temp folder; register the real .exe instead
   else if (process.env.PORTABLE_EXECUTABLE_FILE) opts.path = process.env.PORTABLE_EXECUTABLE_FILE;
@@ -780,6 +822,10 @@ ipcMain.handle('lyrics', async (_e, q) => {
   if (!settings.lyrics || !q || !q.title) return null;
   try { return await lyrics.find(q); } catch { return null; }
 });
+ipcMain.handle('artwork', async (_e, q) => {
+  if (!settings.onlineArtwork || !q || typeof q.title !== 'string') return null;
+  try { return await artwork.find({ title: q.title, artist: String(q.artist || '') }); } catch { return null; }
+});
 ipcMain.handle('ocr', async (_e, p) => {
   if (typeof p !== 'string' || !fs.existsSync(p)) return '';
   const text = await ocr(p);
@@ -801,7 +847,16 @@ ipcMain.on('capture-copy', (_e, p) => {
   const img = nativeImage.createFromPath(p);
   if (!img.isEmpty()) clipboard.writeImage(img);
 });
-ipcMain.on('recent-remove', (_e, p) => { const i = recent.findIndex(r => r.path === p); if (i >= 0) recent.splice(i, 1); });
+ipcMain.on('recent-remove', (_e, p) => {
+  const i = recent.findIndex(r => r.path === p);
+  if (i < 0) return;
+  const [item] = recent.splice(i, 1);
+  // Screenshots live in our own captures folder and the list is rebuilt from it on every start,
+  // so removing one has to delete its file or it comes back. (Downloads are the user's files: never touched.)
+  if (item.kind === 'capture' && path.dirname(path.resolve(item.path)).toLowerCase() === path.resolve(CAPTURE_DIR).toLowerCase()) {
+    fs.rm(item.path, { force: true }, () => {});
+  }
+});
 let phoneBlocker = null;            // keep the PC awake (and on Wi-Fi) while phone drop is on
 function phoneAwake(on) {
   if (on && phoneBlocker === null) phoneBlocker = powerSaveBlocker.start('prevent-app-suspension');
@@ -990,6 +1045,7 @@ app.whenReady().then(() => {
 
   lyrics.init(path.join(app.getPath('userData'), 'lyrics-cache.json'));
   loadRecentCaptures();
+  seedImageSig();
   watchDownloads();
 
   screen.on('display-metrics-changed', () => { placeWindow(); syncDeskEq(); });   // also: taskbar moved / resized
@@ -1002,8 +1058,13 @@ app.whenReady().then(() => {
   try { lastClip = clipboard.readText(); } catch { /* ignore */ }
   setInterval(pollClipboard, 1000);
 
-  // (self-test runs must not re-point the login item at the dev build)
-  if (settings.launchAtLogin && !process.env.NOTCH_SNAP) applyLoginItem(true);
+  // Start with Windows: on by default for the real app (first run only, so a user who
+  // switches it off stays off). Re-registering on every start keeps the path current
+  // if the portable .exe was moved. Self-test runs never touch the login item.
+  if (!process.env.NOTCH_SNAP) {
+    if (app.isPackaged && !settings.loginInit) { settings.loginInit = true; settings.launchAtLogin = true; saveSettings(); }
+    if (settings.launchAtLogin) applyLoginItem(true);
+  }
   if (process.env.NOTCH_SNAP) runSnapshots(process.env.NOTCH_SNAP);
 });
 

@@ -75,11 +75,14 @@ function compactWidth() {
 }
 // which live stats the idle pill shows (Settings → Widgets)
 function idleCfg() { return { date: true, weather: true, cpu: true, ram: true, net: true, battery: true, alerts: true, ...(S.settings.idleStats || {}) }; }
+// Hovering only reveals the hidden stats when hover doesn't open the panel (Open = Click).
+// Otherwise the panel opens right away and briefly flashing the extra chips just looks glitchy.
+function hoverRevealsStats() { return S.settings.idleMinimal && (S.settings.openDelay ?? 140) < 0; }
 // what the idle pill shows (right side). Minimal mode keeps it calm: weather + anything urgent,
-// and reveals the rest while the mouse is on the pill.
+// and (in click-to-open mode) reveals the rest while the mouse is on the pill.
 function idleStatsOn() {
   const o = idleCfg();
-  const minimal = S.settings.idleMinimal && !S.hover;
+  const minimal = S.settings.idleMinimal && !(S.hover && hoverRevealsStats());
   const unread = typeof ALERTS !== 'undefined' ? ALERTS.unread : 0;
   const onBattery = S.batt && hasBattery() && !S.batt.charging;
   const list = [];
@@ -246,7 +249,7 @@ function reportHitRect() {
 api.on('conn', c => { S.conn = c; renderCompact(); });
 api.on('hover', h => {
   S.hover = h;
-  if (S.settings.idleMinimal) renderCompact();          // minimal pill: reveal the details while hovered
+  if (hoverRevealsStats()) renderCompact();             // minimal pill + click-to-open: reveal the details while hovered
   if (!h) S.suppressExpand = false;
   // interactive pop-ups (screenshot, download, USB) stay put while the mouse is on them
   if (S.mode === 'peek' && S.peekInteractive) {
@@ -335,7 +338,7 @@ function peekTrack() {
     <div class="pk-art" style="${m.thumb ? `background-image:url('${m.thumb}')` : ''}">${m.thumb ? '' : icon('music')}</div>
     <div class="pk-text">
       <div class="pk-title">${esc(m.title)}</div>
-      <div class="pk-sub">${esc(m.artist || appName(m.app))}</div>
+      <div class="pk-sub">${esc(m.artist || m.appLabel || appName(m.app))}</div>
     </div>
     <div class="eq big playing live"><i></i><i></i><i></i><i></i><i></i></div>`, { width: 380, duration: 3000 });
 }
@@ -492,7 +495,7 @@ api.on('media', onMedia);
 function onMedia(m) {
   const prev = S.media;
   // the bridge only sends artwork when it changes
-  if (m.active && m.thumb === undefined && prev.thumbId === m.thumbId) m.thumb = prev.thumb;
+  if (m.active && m.thumb === undefined && prev.thumbId === m.thumbId) { m.thumb = prev.thumb; m.artFallback = prev.artFallback; }
   m.receivedAt = Date.now();
   S.media = m;
 
@@ -504,10 +507,35 @@ function onMedia(m) {
   if (!firstLoad && m.status === 'Playing' && (trackChanged || resumed)) setTimeout(peekTrack, 350);
   if ((trackChanged || (!key && firstLoad === false)) && typeof onTrackChanged === 'function') onTrackChanged();
 
+  // keep looked-up art for the same song even if the player re-sends "no art" (e.g. a forced refresh)
+  if (key && !trackChanged && !m.thumb && prev.artFallback) { m.thumb = prev.thumb; m.artFallback = true; }
   if (m.thumb !== prev.thumb) updateAccent(m.thumb);
   renderMediaCard();
   renderCompact();
   if (typeof vizCheck === 'function') vizCheck();
+  if (trackChanged || !m.thumb) scheduleArtLookup();
+}
+
+// No album art from the player (common for browsers / YouTube)? Give the player a few seconds to
+// publish it, then look the song up online (Settings → Live → Find missing album art online).
+let artTimer = 0, artKeyAsked = '';
+function scheduleArtLookup() {
+  const m = S.media;
+  if (!m.active || m.thumb || !m.title || !S.settings.onlineArtwork || artKeyAsked === S.mediaKey) return;
+  const key = S.mediaKey;
+  artKeyAsked = key;
+  clearTimeout(artTimer);
+  artTimer = setTimeout(async () => {
+    if (S.mediaKey !== key || S.media.thumb) return;
+    const url = await api.artwork({ title: S.media.title, artist: S.media.artist });
+    if (!url || S.mediaKey !== key || S.media.thumb) return;   // asked once per song
+    S.media.thumb = url;                  // later bridge updates keep it (same thumbId) until the player sends real art
+    S.media.artFallback = true;
+    updateAccent(url);
+    renderMediaCard();
+    compactKey = '';
+    renderCompact();
+  }, 3500);
 }
 
 function renderMediaCard() {
@@ -519,7 +547,7 @@ function renderMediaCard() {
   card.classList.toggle('is-playing', isPlaying());
   $('mcArt').style.backgroundImage = active && m.thumb ? `url('${m.thumb}')` : '';
   $('mcGlow').style.backgroundImage = active && m.thumb ? `url('${m.thumb}')` : '';
-  $('mcApp').textContent = active ? appName(m.app) : 'Media';
+  $('mcApp').textContent = active ? (m.appLabel || appName(m.app)) : 'Media';
   $('mcTitle').textContent = active ? (m.title || 'Unknown title') : 'Nothing playing';
   $('mcArtist').textContent = active ? (m.artist || m.album || '') : 'Play something in Spotify, YouTube…';
   $('mcPlay').innerHTML = icon(isPlaying() ? 'pause' : 'play');
