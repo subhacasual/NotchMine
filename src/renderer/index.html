@@ -28,14 +28,16 @@
       <!-- ============ EXPANDED ============ -->
       <div class="layer" id="expanded">
         <header class="hdr">
+          <button class="icon-btn" id="stackBack" title="Back to all sections"><i data-icon="chevL"></i></button>
           <nav class="tabs" id="tabs">
             <button class="tab-btn" data-tab="home" title="Home"><i data-icon="home"></i><span>Home</span></button>
-            <button class="tab-btn" data-tab="tools" title="Focus"><i data-icon="timer"></i><span>Focus</span></button>
-            <button class="tab-btn" data-tab="system" title="System"><i data-icon="cpu"></i><span>System</span></button>
             <button class="tab-btn" data-tab="apps" title="Apps"><i data-icon="grid"></i><span>Apps</span></button>
             <button class="tab-btn" data-tab="shelf" title="Shelf"><i data-icon="tray"></i><span>Shelf</span><b class="badge" id="shelfBadge"></b></button>
+            <button class="tab-btn" data-tab="tools" title="Focus"><i data-icon="timer"></i><span>Focus</span></button>
+            <button class="tab-btn" data-tab="system" title="System"><i data-icon="cpu"></i><span>System</span></button>
             <button class="tab-btn" data-tab="alerts" title="Notifications"><i data-icon="bell"></i><span>Alerts</span><b class="badge" id="alertBadge"></b></button>
           </nav>
+          <div class="hdr-label" id="hdrLabel"></div>
           <div class="hdr-stats" id="hdrStats" title="Network · processor · memory · battery"></div>
           <div class="hdr-right">
             <span class="hdr-ind" id="hdrInd"></span>
@@ -46,6 +48,79 @@
         </header>
 
         <main class="pages">
+          <!-- OVERVIEW (Stacked layout): every section at once, top to bottom. A section's title opens its full page. -->
+          <section class="page" data-page="overview">
+            <div class="ov" id="ov">
+              <div class="ov-card ov-home" id="ovHome">
+                <div class="ov-media" id="ovMedia">
+                  <div class="ov-art" id="ovArt"><i data-icon="music"></i></div>
+                  <div class="ov-mi">
+                    <div class="ov-title" id="ovTitle"></div>
+                    <div class="ov-artist" id="ovArtist"></div>
+                  </div>
+                  <div class="eq big live" id="ovEq"><i></i><i></i><i></i><i></i><i></i></div>
+                  <div class="ov-ctl">
+                    <button class="ctl" id="ovPrev" title="Previous"><i data-icon="prev"></i></button>
+                    <button class="ctl play" id="ovPlay" title="Play / Pause"><i data-icon="play"></i></button>
+                    <button class="ctl" id="ovNext" title="Next"><i data-icon="next"></i></button>
+                  </div>
+                </div>
+                <div class="ov-prog" id="ovProg"><div class="bar" id="ovBar"><div class="fill" id="ovFill"></div></div></div>
+                <div class="ov-now">
+                  <div class="ov-clock" id="ovClock"></div>
+                  <div class="ov-wx" id="ovWx"></div>
+                  <button class="ov-go" data-open="home" title="Open Home: calendar, forecast, lyrics"><i data-icon="chevR"></i></button>
+                </div>
+              </div>
+
+              <div class="ov-card ov-drop" id="ovApps">
+                <button class="ov-head" data-open="apps" title="Open Apps"><i data-icon="grid"></i><span>Apps</span><em id="ovAppsMeta"></em><i data-icon="chevR" class="ov-chev"></i></button>
+                <div class="ov-apps" id="ovAppsGrid"></div>
+              </div>
+
+              <div class="ov-card ov-drop" id="ovShelf">
+                <button class="ov-head" data-open="shelf" title="Open Shelf: files, recent, clipboard, phone"><i data-icon="tray"></i><span>Shelf</span><em id="ovShelfMeta"></em><i data-icon="chevR" class="ov-chev"></i></button>
+                <div class="ov-sublabel">Files</div>
+                <div class="ov-shelf" id="ovShelfRow"></div>
+                <div class="ov-sub" id="ovRecentWrap">
+                  <div class="ov-sublabel">Recent <span>screenshots &amp; downloads · click to open, drag out</span></div>
+                  <div class="ov-recent" id="ovRecent"></div>
+                </div>
+                <div class="ov-sub" id="ovClipWrap">
+                  <div class="ov-sublabel">Clipboard <span>click to copy</span></div>
+                  <div class="ov-clip" id="ovClip"></div>
+                </div>
+              </div>
+
+              <div class="ov-card ov-focus" id="ovFocus">
+                <div class="ov-tm">
+                  <svg class="ov-ring" viewBox="0 0 36 36"><circle class="ring-bg" cx="18" cy="18" r="15"></circle><circle class="ring-fg" id="ovRing" cx="18" cy="18" r="15"></circle></svg>
+                  <div><b id="ovTmTime">25:00</b><span id="ovTmLabel">Focus</span></div>
+                </div>
+                <div class="chips" id="ovChips">
+                  <button class="chip" data-preset="focus">Focus</button>
+                  <button class="chip" data-preset="break">Break</button>
+                </div>
+                <button class="pill-btn primary small" id="ovTmStart"></button>
+                <button class="ov-go" data-open="tools" title="Open Focus: timer and notes"><i data-icon="chevR"></i></button>
+              </div>
+
+              <div class="ov-card" id="ovSys">
+                <button class="ov-head" data-open="system" title="Open System"><i data-icon="cpu"></i><span>System</span><em id="ovSysMeta"></em><i data-icon="chevR" class="ov-chev"></i></button>
+                <div class="ov-stats" id="ovStats"></div>
+                <div class="ov-sliders">
+                  <div class="ov-sl"><button class="mini-btn" id="ovMute" title="Mute"><i data-icon="volume"></i></button><input type="range" id="ovVol" min="0" max="100" value="0" title="Volume"></div>
+                  <div class="ov-sl" id="ovBrtRow"><span class="mini-btn static"><i data-icon="sun"></i></span><input type="range" id="ovBrt" min="0" max="100" value="0" title="Brightness"></div>
+                </div>
+              </div>
+
+              <div class="ov-card" id="ovAlerts">
+                <button class="ov-head" data-open="alerts" title="Open Alerts"><i data-icon="bell"></i><span>Alerts</span><em id="ovAlertsMeta"></em><i data-icon="chevR" class="ov-chev"></i></button>
+                <div class="ov-alerts" id="ovAlertList"></div>
+              </div>
+            </div>
+          </section>
+
           <!-- HOME -->
           <section class="page" data-page="home">
             <div class="card media-card" id="mediaCard">
@@ -318,9 +393,18 @@
                 <div class="set-sec active" data-sec="general">
                   <div class="set-col">
                     <label class="set-row"><span>Launch at login</span><input type="checkbox" class="switch" data-setting="launchAtLogin"></label>
-                    <label class="set-row"><span>Hide in full-screen apps</span><input type="checkbox" class="switch" data-setting="hideInFullscreen"></label>
+                    <div class="set-row" title="While a movie, video or game fills the notch's screen. Fade: the notch shrinks to a faint thin line and comes back to normal when you hover it."><span>Full-screen apps</span>
+                      <span class="seg" data-seg="fullscreenMode" data-type="str">
+                        <button data-v="show">Show</button><button data-v="dim">Fade</button><button data-v="hide">Hide</button>
+                      </span>
+                    </div>
                     <label class="set-row"><span>24-hour clock</span><input type="checkbox" class="switch" data-setting="use24h"></label>
                     <label class="set-row"><span>Show seconds</span><input type="checkbox" class="switch" data-setting="showSeconds"></label>
+                    <div class="set-row" title="Tabs: one section at a time in a wide panel. Stacked: every section at once in a tall column; click a section's title for its full page."><span>Layout</span>
+                      <span class="seg" data-seg="layout" data-type="str">
+                        <button data-v="tabs">Tabs</button><button data-v="stacked">Stacked</button>
+                      </span>
+                    </div>
                     <div class="set-row"><span class="muted">NotchMine</span><button class="pill-btn danger small" id="quitBtn"><i data-icon="power"></i><span>Quit</span></button></div>
                   </div>
                   <div class="set-col">
@@ -440,7 +524,16 @@
                 <div class="set-sec" data-sec="side">
                   <div class="set-col">
                     <label class="set-row"><span>Side mode</span><input type="checkbox" class="switch" data-setting="sideMode"></label>
-                    <div class="set-note">While one of these apps is maximized and in front, the notch moves to the middle of the right edge and turns sideways, so it never covers browser tabs. Hover it to open the panel. It goes back to its usual spot as soon as that window is minimized, made smaller or closed, or you switch to another app.</div>
+                    <div class="set-note" title="Hover it to open the panel. It goes back to its usual spot as soon as that window is minimized, made smaller or closed, or you switch to another app.">Moves to the right edge while one of these apps is maximized in front, so it never covers tabs.</div>
+                    <label class="set-row" title="While it sits on the side and the mouse isn't on it, the notch turns almost invisible so it doesn't cover the page. Touch it with the mouse and it comes right back. Pop-ups and the open panel always show normally."><span>See-through when idle</span><input type="checkbox" class="switch" data-setting="sideFade"></label>
+                    <div class="slider-set" title="How see-through the pill's dark background gets while the mouse is away. 100% = gone completely.">
+                      <div class="slider-label"><span>Background transparency</span><b id="sideFadeBgVal">95%</b></div>
+                      <input type="range" min="0" max="100" data-range="sideFadeBg" data-out="sideFadeBgVal">
+                    </div>
+                    <div class="slider-set" title="How see-through the icons, time and stats get while the mouse is away. 100% = gone completely (it still opens when the mouse reaches it).">
+                      <div class="slider-label"><span>Icons &amp; info transparency</span><b id="sideFadeFgVal">85%</b></div>
+                      <input type="range" min="0" max="100" data-range="sideFadeFg" data-out="sideFadeFgVal">
+                    </div>
                   </div>
                   <div class="set-col">
                     <div class="set-label">Apps that send it to the side</div>
@@ -533,6 +626,7 @@
   <script src="app.js"></script>
   <script src="extras.js"></script>
   <script src="live.js"></script>
+  <script src="stack.js"></script>
   <script src="boot.js"></script>
 </body>
 </html>

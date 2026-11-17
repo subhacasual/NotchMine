@@ -6,7 +6,7 @@ const CHANNELS = [
   'hover', 'blur', 'media', 'volume', 'brightness', 'sys', 'clipboard', 'settings',
   'open-tab', 'pulse', 'net', 'notif', 'notif-status',
   'mixer', 'privacy', 'mic', 'audio-device', 'lockkey', 'drive', 'capture', 'download', 'phone-file', 'phone-status',
-  'party', 'accent', 'anchor', 'drag-state', 'side', 'conn',
+  'party', 'accent', 'anchor', 'drag-state', 'side', 'conn', 'fullscreen',
 ];
 
 contextBridge.exposeInMainWorld('notch', {

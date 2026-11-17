@@ -21,7 +21,8 @@ Windows 10 / 11 · Electron · Free and open source (MIT)
 - 🪐 **Music icon effects:** the album art can glow and throw sparks like a sun, or turn into a burning holographic orb, in time with the beat. The orb's spin follows the song's tempo, bass and vocals, and an **Effect sensitivity** slider sets how wildly it reacts.
 - 🎉 **Party mode:** a full-screen light show (Club, Synthwave or Warp) driven by whatever is playing, on one screen or all of them.
 - 📊 **Desktop equalizer:** see-through, click-through bars that dance along the bottom of your screen while you work.
-- 🧭 **Side mode:** when a chosen app (e.g. Chrome) is maximized, the notch moves to the right edge and turns vertical, so it never covers your tabs.
+- 🎬 **Stays out of your movies:** when a video, movie or game goes full screen on the notch's screen, the notch fades to a faint thin line and comes back the moment you hover it. Prefer it gone completely, or always shown? Settings → General → **Full-screen apps** (*Show*, *Fade* or *Hide*).
+- 🧭 **Side mode:** when a chosen app (e.g. Chrome) is maximized, the notch moves to the right edge and turns vertical, so it never covers your tabs. While your mouse is away it turns see-through, and it comes straight back when you touch it.
 - 🎨 **Make it yours:** Notch or Island shape, four styles, four sizes, any accent colour, visualizer palettes (presets or your own mix), and drag it anywhere on any monitor.
 
 ## Screenshots
@@ -104,16 +105,6 @@ Right-click the **tray icon** for quick toggles: hide, display, party mode, desk
 - **Clock and month calendar.**
 - **Weather** with a 4-day forecast for any city.
 
-### Focus
-- **Pomodoro** (25/5 by default, adjustable) plus quick 1/5/10/15-minute timers, with a chime and a daily session count.
-- **Quiet mode:** holds notification pop-ups while you focus and tells you how many arrived.
-- **Quick notes** that save automatically.
-
-### System
-- **CPU and RAM** graphs, plus **network** download/upload speed with session totals.
-- **Volume:** master volume plus a **per-app mixer**.
-- **Brightness** (laptop screens), **mic mute**, and **battery** status.
-
 ### Apps
 - **Your own launchpad:** add websites or apps (drag `.exe`/shortcuts/links in, or use *Add*), with real icons.
 - **Built-in tiles:** Snip, Lock, Calculator, Files, Terminal, Task Manager, Wi-Fi, Bluetooth, Sound, Settings.
@@ -123,6 +114,16 @@ Right-click the **tray icon** for quick toggles: hide, display, party mode, desk
 - **Recent:** screenshots and finished downloads, with drag-out, **copy text from a screenshot** (offline OCR) and save.
 - **Clipboard history.**
 - **Phone → PC:** scan a QR code and send photos or files from your phone over your Wi-Fi. Uploads are chunked and resume after interruptions. See [Privacy](#privacy).
+
+### Focus
+- **Pomodoro** (25/5 by default, adjustable) plus quick 1/5/10/15-minute timers, with a chime and a daily session count.
+- **Quiet mode:** holds notification pop-ups while you focus and tells you how many arrived.
+- **Quick notes** that save automatically.
+
+### System
+- **CPU and RAM** graphs, plus **network** download/upload speed with session totals.
+- **Volume:** master volume plus a **per-app mixer**.
+- **Brightness** (laptop screens), **mic mute**, and **battery** status.
 
 ### Alerts
 - **Windows notifications** (WhatsApp, Discord, Teams, Mail…) mirrored into the notch, with an unread badge.
@@ -144,9 +145,11 @@ Right-click the **tray icon** for quick toggles: hide, display, party mode, desk
 ### Side mode
 - **Your own app list** (Chrome by default). When one of them is **maximized** and in front, the notch moves to the middle of the right edge as an upright vertical pill.
 - It goes back to its spot as soon as that window is minimized, resized or closed.
+- **See-through when idle:** while it rests on the side with the mouse away, it fades out so it doesn't cover the page, and comes back the moment the mouse reaches it. Two sliders (Settings → Side mode) set how see-through the **background** and the **icons & info** get, from solid to completely invisible. Pop-ups and the open panel always show normally.
 
 ### Customise
 - **Shape:** *Notch* (attached to the top edge) or *Island* (floating, can go anywhere on screen).
+- **Layout:** *Tabs* (one section at a time in a wide panel) or *Stacked* (Settings → General): every section at once in a tall column, with music, clock and weather, your apps, the shelf, the focus timer, system stats with volume and brightness sliders, and the latest notifications. Click a section's title to open its full page, and ‹ to go back.
 - **Look:** Midnight, Graphite, Glass and Aurora styles, sizes S–XL, and any accent colour (or from the album art).
 - **Visualizer colours:** follow the accent, use a preset (Rainbow, Sunset, Ocean, Neon, Fire, Aurora) or mix up to three colours of your own.
 - **Music icon effect:** Sun rays, Orb or Off.
@@ -251,6 +254,7 @@ src/
     app.js         Core: layout modes, media, clock, weather, timer, system, shelf
     extras.js      Themes, launchpad, notifications, network, visualizer, sun/orb effects
     live.js        Live activities, lyrics, mixer, devices, recent items, phone drop UI
+    stack.js       Stacked layout: every section at once in a tall column
     boot.js        Start-up
     party.*        Party mode (one full-screen window per display)
     deskeq.*       Desktop equalizer (click-through window per display)

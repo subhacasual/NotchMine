@@ -149,19 +149,22 @@ namespace NotchMine {
       return Big(h) ? 3 : 2;
     }
     static bool dpi;
-    public static bool IsForegroundFullscreen() {
+    // "" when the foreground window isn't full-screen, else the rect of the monitor it fills ("L,T,R,B", physical px)
+    public static string ForegroundFullscreenMonitor() {
       if (!dpi) { SetProcessDPIAware(); dpi = true; }
       IntPtr h = GetForegroundWindow();
-      if (h == IntPtr.Zero) return false;
+      if (h == IntPtr.Zero) return "";
       var sb = new System.Text.StringBuilder(256);
       GetClassName(h, sb, 256);
       string c = sb.ToString();
-      if (c == "Progman" || c == "WorkerW" || c == "Shell_TrayWnd" || c == "Shell_SecondaryTrayWnd") return false;
+      if (c == "Progman" || c == "WorkerW" || c == "Shell_TrayWnd" || c == "Shell_SecondaryTrayWnd") return "";
       RECT r;
-      if (!GetWindowRect(h, out r)) return false;
+      if (!GetWindowRect(h, out r)) return "";
       var mi = new MONITORINFO(); mi.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
-      if (!GetMonitorInfo(MonitorFromWindow(h, 2), ref mi)) return false;
-      return r.L <= mi.rcMonitor.L && r.T <= mi.rcMonitor.T && r.R >= mi.rcMonitor.R && r.B >= mi.rcMonitor.B;
+      if (!GetMonitorInfo(MonitorFromWindow(h, 2), ref mi)) return "";
+      var m = mi.rcMonitor;
+      if (!(r.L <= m.L && r.T <= m.T && r.R >= m.R && r.B >= m.B)) return "";
+      return m.L + "," + m.T + "," + m.R + "," + m.B;
     }
   }
 
@@ -832,8 +835,8 @@ while ($true) {
   if ($tick % 10 -eq 3) { Poll-Drives }
   if ($audioOk -and $tick % 5 -eq 0) {
     try {
-      $fs = [NotchMine.Win]::IsForegroundFullscreen()
-      if ($fs -ne $script:lastFs) { $script:lastFs = $fs; Send @{ type = 'fullscreen'; value = $fs } }
+      $fsm = [NotchMine.Win]::ForegroundFullscreenMonitor()
+      if ($fsm -ne $script:lastFs) { $script:lastFs = $fsm; Send @{ type = 'fullscreen'; value = ($fsm -ne ''); monitor = $fsm } }
     } catch {}
   }
   $tick++

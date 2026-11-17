@@ -13,6 +13,7 @@ window.__notchDebug = {
   S.settings = init.settings;
   if (Number.isFinite(init.anchor)) S.anchor = init.anchor;
   if (init.side) setSide(true);
+  S.fsDim = !!init.fullscreenDim;
   if (init.state && init.state.conn) S.conn = init.state.conn;
   S.clipboard = init.clipboard || [];
   tmSet('focus');

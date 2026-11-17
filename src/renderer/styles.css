@@ -55,8 +55,16 @@ i[data-icon] svg { width: 100%; height: 100%; }
   will-change: width, height, left;
 }
 /* ---- side mode: vertical pill in the middle of the right edge (rounded all round, no ears) */
-:root[data-side="1"] #island { transition: width .5s var(--spring), height .5s var(--spring), left .45s var(--smooth), top .45s var(--smooth), transform .45s var(--smooth); }
+:root[data-side="1"] #island { transition: width .5s var(--spring), height .5s var(--spring), left .45s var(--smooth), top .45s var(--smooth), transform .45s var(--smooth), opacity .4s var(--smooth); }
 :root[data-side="1"] .ear { display: none; }
+/* side mode, resting with no mouse on it: see-through, back to normal on hover. The background and the
+   icons / info fade separately (Settings → Side mode). The pill's backdrop moves to #island::after so it
+   can fade on its own while the content keeps its own opacity. */
+:root[data-side-fade="1"] #island::after { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; border-radius: 26px; background: var(--bg); opacity: var(--side-bg-op, .05); animation: sideFadeBg .7s var(--smooth); }
+:root[data-side-fade="1"] #notch { background: transparent !important; box-shadow: none !important; }
+:root[data-side-fade="1"] #notch::before { opacity: calc(.6 * var(--side-bg-op, .05)); }
+:root[data-side-fade="1"] #compact.show, :root[data-side-fade="1"] #sparkLayer.on { opacity: var(--side-fg-op, .15); transition: opacity .7s var(--smooth); }
+@keyframes sideFadeBg { from { opacity: 1; } }
 :root[data-side="1"] #notch { border-radius: 17px; box-shadow: 0 6px 22px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.08); }
 :root[data-side="1"] #island[data-mode="peek"] #notch { border-radius: 31px; }
 :root[data-side="1"] #island[data-mode="expanded"] #notch { border-radius: 28px; box-shadow: 0 18px 50px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.08); }
@@ -123,6 +131,15 @@ i[data-icon] svg { width: 100%; height: 100%; }
 :root[data-shape="island"] #notch { border-radius: 17px; box-shadow: 0 6px 22px rgba(0,0,0,.4), inset 0 0 0 1px rgba(255,255,255,.07); }
 :root[data-shape="island"] #island[data-mode="peek"] #notch { border-radius: 31px; }
 :root[data-shape="island"] #island[data-mode="expanded"] #notch { border-radius: 32px; box-shadow: 0 18px 50px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.08); }
+/* ---- full-screen app on this screen: a faint thin line that stays out of the movie's way (hover = normal) */
+#island { transition: width 0.55s var(--spring), height 0.55s var(--spring), left 0.55s var(--spring), opacity 0.35s var(--smooth); }
+#island.ghost { opacity: 0.25; transition: width 0.45s var(--smooth), height 0.45s var(--smooth), left 0.55s var(--spring), opacity 0.45s var(--smooth); }
+#island.ghost #notch { background: #8a8a8e !important; border-radius: 0 0 4px 4px; box-shadow: none !important; }   /* mid-grey: findable on dark and bright scenes */
+#island.ghost .ear { width: 0; height: 0; }
+#island.ghost #notch::before { display: none; }   /* no aurora glow on the line */
+#island.ghost .layer { opacity: 0; visibility: hidden; transition: opacity .15s, visibility 0s linear .15s; }
+:root[data-shape="island"] #island.ghost #notch, :root[data-side="1"] #island.ghost #notch { border-radius: 3px; }
+:root[data-shape="island"] #island.ghost { top: 4px; }
 @keyframes pulse { 50% { box-shadow: 0 0 0 3px rgba(var(--accent), .5), 0 0 30px rgba(var(--accent), .5); } }
 
 /* ================================================================ layers */
@@ -436,6 +453,7 @@ i[data-icon] svg { width: 100%; height: 100%; }
 .mc-party.mc-deskeq { right: auto; left: 12px; }
 .mc-party.mc-deskeq.on { background: rgba(var(--accent), .45); box-shadow: inset 0 0 0 1px rgba(255,255,255,.35), 0 0 14px rgba(var(--accent), .6); }
 .slider-set { margin: 4px 0 10px; }
+.set-sec[data-sec="side"] .slider-set { margin: 2px 0 4px; }
 .slider-set input[type=range] { height: 20px; border-radius: 10px; }
 .slider-set input[type=range]::-webkit-slider-thumb { height: 20px; }
 .pill-btn.party-go { align-self: flex-start; margin-top: 8px; flex: none; height: 32px; }
@@ -945,3 +963,173 @@ body.viz-live .eq.live.playing i { animation: none; transition: height 0.07s lin
 .chip.quiet { display: inline-flex; align-items: center; gap: 4px; }
 .chip.quiet i { width: 12px; height: 12px; }
 .chip.quiet.active { background: rgba(var(--accent), .2); color: rgb(var(--accent)); }
+
+/* ================================================================ stacked layout (Settings → General → Layout) */
+/* header: no tabs in Stacked. The overview shows the date; a page opened from it shows its name and a ‹ back button */
+#stackBack, .hdr-label { display: none; }
+:root[data-layout="stacked"] .tabs, :root[data-layout="stacked"] .hdr-stats, :root[data-layout="stacked"] .hdr-time { display: none; }
+:root[data-layout="stacked"] #island:not([data-view="overview"]) #stackBack { display: grid; flex: none; }
+:root[data-layout="stacked"] .hdr-label { display: block; flex: 1; min-width: 0; padding-left: 8px; font-size: 12.5px; font-weight: 600; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-layout="stacked"] #island:not([data-view="overview"]) .hdr-label { padding-left: 2px; font-size: 13px; color: var(--text); }
+
+/* every page is one column, as tall as its content. Pages reach into the panel's right padding so a
+   scrollbar (only when the screen is too short) sits beside the cards, not over them. The scrollbar's
+   space is always kept (scrollbar-gutter), so the content is 356px wide with or without it: if a
+   scrollbar could narrow the content, text would re-wrap and change the height the panel follows,
+   and the panel's springy resize would toggle the scrollbar on and off: the panel would shake */
+:root[data-layout="stacked"] .page { grid-template-columns: 1fr; grid-auto-rows: min-content; align-content: start; gap: 8px; right: -9px; padding-right: 3px; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
+.page[data-page="overview"] { display: block; }
+:root[data-layout="stacked"] .card-title .muted { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* home */
+:root[data-layout="stacked"] .media-card { min-height: 200px; }
+:root[data-layout="stacked"] .clock-card .cal { margin-top: 12px; }
+:root[data-layout="stacked"] .weather-card .wx-days { margin-top: 12px; }
+/* focus */
+:root[data-layout="stacked"] #notes { min-height: 160px; }
+/* system */
+:root[data-layout="stacked"] .sys-col { grid-template-columns: 1fr 1fr; grid-template-rows: none; }
+:root[data-layout="stacked"] .stat-card .spark { flex: none; height: 40px; }
+:root[data-layout="stacked"] .net-card .spark.net { flex: none; height: 46px; }
+:root[data-layout="stacked"] .controls-card { min-height: 180px; }
+/* apps */
+:root[data-layout="stacked"] .apps-card { min-height: 250px; }                 /* room for the add-a-shortcut form */
+:root[data-layout="stacked"] .apps-grid { flex: none; overflow: visible; grid-template-columns: repeat(4, 1fr); }
+:root[data-layout="stacked"] .app-form { width: calc(100% - 16px); }
+/* shelf */
+:root[data-layout="stacked"] .shelf-grid { flex: none; overflow: visible; }
+:root[data-layout="stacked"] .shelf-card.empty { min-height: 150px; }
+:root[data-layout="stacked"] .recent-list { flex: none; max-height: 232px; }
+:root[data-layout="stacked"] .clip-list { flex: none; max-height: 200px; }
+:root[data-layout="stacked"] .page[data-page="shelf"] .phone-panel { flex-direction: column; align-items: center; gap: 12px; padding: 16px; overflow-y: auto; }
+:root[data-layout="stacked"] .phone-qr { width: 170px; height: 170px; }
+:root[data-layout="stacked"] .phone-qr img { width: 158px; height: 158px; }
+:root[data-layout="stacked"] .phone-stop { top: 10px; right: 10px; }
+:root[data-layout="stacked"] .phone-warn { flex-direction: column; overflow-y: auto; }
+/* alerts */
+:root[data-layout="stacked"] .alerts-list { flex: none; overflow: visible; grid-template-columns: 1fr; }
+:root[data-layout="stacked"] .alerts-empty { padding: 18px 0 12px; }
+/* settings: the section list becomes a row on top, the options one column below it */
+:root[data-layout="stacked"] .settings-card { grid-template-columns: 1fr; gap: 10px; padding: 12px; }
+:root[data-layout="stacked"] .set-nav { flex-direction: row; flex-wrap: wrap; padding: 0 0 10px; border-right: 0; border-bottom: 1px solid var(--line); }
+:root[data-layout="stacked"] .set-nav > button { height: 26px; padding: 0 9px; font-size: 12px; }
+:root[data-layout="stacked"] .set-sec { position: static; grid-template-columns: 1fr; row-gap: 10px; transform: none; }
+:root[data-layout="stacked"] .set-sec:not(.active) { display: none; }
+.ov { width: 356px; display: flex; flex-direction: column; gap: 6px; }
+.ov-card { position: relative; background: var(--card); border-radius: 18px; padding: 8px 11px; box-shadow: inset 0 0 0 1px var(--line); transition: background .2s, box-shadow .2s; }
+.ov-card.drag-over { box-shadow: inset 0 0 0 2px rgba(var(--accent), .8); background: rgba(var(--accent), .1); }
+.ov-head { display: flex; align-items: center; gap: 6px; width: 100%; height: 18px; margin-bottom: 6px; font-size: 11.5px; font-weight: 600; color: var(--muted); text-align: left; transition: color .2s; }
+.ov-head > i:first-child { width: 13px; height: 13px; color: rgb(var(--accent)); }
+.ov-head em { margin-left: auto; font-style: normal; font-weight: 500; font-size: 11px; color: var(--faint); white-space: nowrap; }
+.ov-head em:empty + .ov-chev { margin-left: auto; }
+.ov-head .ov-chev { width: 13px; height: 13px; color: var(--faint); transition: transform .2s, color .2s; }
+.ov-head:hover { color: var(--text); }
+.ov-head:hover .ov-chev { color: var(--text); transform: translateX(2px); }
+.ov-go { width: 24px; height: 24px; flex: none; border-radius: 8px; display: grid; place-items: center; color: var(--faint); transition: background .2s, color .2s; }
+.ov-go:hover { background: rgba(255,255,255,.08); color: var(--text); }
+.ov-go i { width: 14px; height: 14px; }
+
+/* home: now playing, clock, weather */
+.ov-home.is-playing { background: linear-gradient(160deg, rgba(var(--accent), .16), var(--card) 65%); }
+.ov-media { display: flex; align-items: center; gap: 10px; }
+.ov-art { width: 44px; height: 44px; flex: none; border-radius: 11px; display: grid; place-items: center; background: rgba(255,255,255,.08) center / cover no-repeat; box-shadow: 0 6px 16px rgba(0,0,0,.4); }
+.ov-art i { width: 20px; height: 20px; color: var(--faint); }
+.ov-art.has-art i { display: none; }
+.ov-mi { flex: 1; min-width: 0; }
+.ov-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-artist { margin-top: 1px; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-media .eq.big { align-self: center; margin: 0 2px 0 0; flex: none; }
+.ov-ctl { display: flex; align-items: center; gap: 2px; flex: none; }
+.ov-ctl .ctl { width: 30px; height: 30px; }
+.ov-ctl .ctl.play { width: 34px; height: 34px; }
+.ov-ctl .ctl i, .ov-ctl .ctl > svg { width: 16px; height: 16px; }
+.ov-prog { margin-top: 8px; }
+.ov-prog.hidden { display: none; }
+.ov-prog .bar { height: 4px; }
+.ov-prog .bar:hover { height: 6px; }
+.ov-home.no-media .ov-media, .ov-home.no-media .ov-prog { display: none; }
+.ov-now { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.ov-home.no-media .ov-now { margin-top: 0; padding-top: 0; border-top: 0; }
+.ov-clock { flex: none; font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif; font-size: 26px; font-weight: 600; line-height: 1; letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
+.ov-clock small { margin-left: 3px; font-size: 11.5px; font-weight: 600; letter-spacing: 0; color: var(--muted); }
+.ov-wx { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
+.ov-wx-ic svg { display: block; width: 22px; height: 22px; filter: drop-shadow(0 0 3px rgba(255,255,255,.18)); }
+.ov-wx > b { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ov-wx-t { display: flex; flex-direction: column; min-width: 0; font-size: 11px; line-height: 1.25; color: rgba(255,255,255,.8); }
+.ov-wx-t span, .ov-wx-t em { max-width: 118px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-wx-t em { font-style: normal; color: var(--muted); }
+
+/* apps + shelf: one row of tiles (two when there are many shortcuts) */
+.ov-apps, .ov-shelf { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.ov-apps .app-tile { height: 52px; gap: 4px; padding: 0 2px; border-radius: 12px; font-size: 9.5px; }
+.ov-apps .app-tile img, .ov-apps .app-letter, .ov-apps .app-sys { width: 24px; height: 24px; }
+.ov-apps .app-letter { font-size: 12px; border-radius: 7px; }
+.ov-apps .app-sys svg { width: 14px; height: 14px; }
+.ov-shelf .shelf-item { gap: 3px; padding: 6px 2px 4px; border-radius: 10px; }
+.ov-shelf .shelf-item img { width: 26px; height: 26px; }
+.ov-shelf .shelf-item span { font-size: 9.5px; }
+.ov-more { border-radius: 10px; background: rgba(255,255,255,.06); color: var(--muted); font-size: 12px; font-weight: 700; transition: background .2s, color .2s; }
+.ov-more:hover { background: rgba(255,255,255,.12); color: var(--text); }
+.ov-empty { grid-column: 1 / -1; height: 36px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1.5px dashed rgba(255,255,255,.14); border-radius: 12px; font-size: 11.5px; color: var(--faint); }
+.ov-empty svg { width: 16px; height: 16px; }
+
+/* focus: one row */
+.ov-focus { display: flex; align-items: center; gap: 8px; }
+.ov-tm { display: flex; align-items: center; gap: 8px; flex: none; min-width: 84px; }
+.ov-ring { width: 30px; height: 30px; flex: none; transform: rotate(-90deg); }
+.ov-ring circle { fill: none; stroke-width: 4; }
+.ov-focus.break .ring-fg { stroke: var(--green); }
+.ov-tm div { display: flex; flex-direction: column; line-height: 1.15; }
+.ov-tm b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.ov-tm span { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+.ov-focus .chips { flex: 1; min-width: 0; flex-wrap: nowrap; gap: 4px; }
+.ov-focus .chip { padding: 0 9px; }
+.ov-focus .pill-btn.primary { flex: none; height: 28px; padding: 0 12px; }
+
+/* system: live numbers, volume and brightness */
+.ov-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 8px; }
+.ov-st { min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 10px; background: rgba(255,255,255,.04); }
+.ov-st span { font-size: 10px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.ov-st b { font-size: 13.5px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-meter { display: block; height: 3px; margin-top: 2px; border-radius: 2px; background: rgba(255,255,255,.1); overflow: hidden; }
+.ov-meter s { display: block; height: 100%; border-radius: 2px; background: rgb(var(--accent)); transition: width .5s var(--smooth); }
+.ov-st.ram .ov-meter s, .ov-st.chg .ov-meter s { background: var(--green); }
+.ov-st.hot b { color: var(--orange); }
+.ov-st.hot .ov-meter s { background: var(--orange); }
+.ov-sliders { display: flex; gap: 12px; }
+.ov-sl { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; }
+.ov-sl.off { display: none; }
+.ov-sl .mini-btn { flex: none; background: rgba(255,255,255,.08); color: var(--text); }
+.ov-sl .mini-btn.static { cursor: default; }
+.ov-sl .mini-btn > svg { width: 13px; height: 13px; }
+.ov-sl input[type=range] { height: 18px; border-radius: 9px; }
+.ov-sl input[type=range]::-webkit-slider-thumb { height: 18px; }
+
+/* alerts: the latest two */
+.ov-alerts { display: flex; flex-direction: column; gap: 4px; }
+.ov-al { width: 100%; min-width: 0; display: flex; align-items: center; gap: 9px; padding: 5px 8px; border-radius: 11px; background: rgba(255,255,255,.04); text-align: left; transition: background .2s; }
+.ov-al:hover { background: rgba(255,255,255,.09); }
+.ov-al .al-icon { width: 24px; height: 24px; border-radius: 7px; }
+.ov-al-b { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ov-al-b b { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-al-b span { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-al time { flex: none; align-self: flex-start; font-size: 10.5px; color: var(--faint); }
+.ov-none { padding: 1px 2px; font-size: 11.5px; color: var(--faint); }
+
+/* shelf section: sub-rows for files, recent screenshots/downloads and the clipboard */
+.ov-sublabel { margin: 0 0 5px 2px; font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-sublabel span { margin-left: 4px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.ov-sub { margin-top: 8px; }
+.ov-recent { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.ovr-item { min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 4px; border-radius: 10px; background: rgba(255,255,255,.04); cursor: grab; transition: background .2s; }
+.ovr-item:hover { background: rgba(255,255,255,.1); }
+.ovr-thumb, .ovr-file { width: 100%; height: 40px; border-radius: 6px; flex: none; }
+.ovr-thumb { object-fit: cover; box-shadow: 0 0 0 1px rgba(255,255,255,.12); pointer-events: none; }
+.ovr-file { display: grid; place-items: center; background: rgba(255,255,255,.05); }
+.ovr-file img { width: 24px; height: 24px; pointer-events: none; }
+.ovr-file svg { width: 16px; height: 16px; color: var(--muted); }
+.ovr-item > span { font-size: 9.5px; color: rgba(255,255,255,.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
+.ov-recent .ov-none, .ov-clip .ov-none { grid-column: 1 / -1; }
+.ov-clip { display: flex; flex-direction: column; gap: 3px; }
+.ov-clip-item { width: 100%; padding: 5px 9px; border-radius: 9px; background: rgba(255,255,255,.04); text-align: left; font-size: 11.5px; color: rgba(255,255,255,.85); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: background .2s, color .2s; }
+.ov-clip-item:hover { background: rgba(255,255,255,.1); }
+.ov-clip-item.done { color: var(--green); }

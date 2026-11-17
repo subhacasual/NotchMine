@@ -281,6 +281,7 @@ function addRecent(it) {
   renderRecent();
 }
 function renderRecent() {
+  if (typeof renderOverview === 'function') renderOverview();
   const box = $('recentList');
   if (!LIVE.recent.length) {
     box.innerHTML = '<div class="clip-empty">Screenshots and finished downloads<br>will show up here</div>';

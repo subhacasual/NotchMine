@@ -180,6 +180,7 @@ document.querySelectorAll('[data-range]').forEach(el => {
     el.style.setProperty('--p', el.value + '%');
     $(el.dataset.out).textContent = el.value + '%';
     S.settings[el.dataset.range] = +el.value;
+    if (el.dataset.range.startsWith('sideFade')) applySideFade();
     clearTimeout(rangeSaveT);                                   // live while dragging, saved shortly after
     rangeSaveT = setTimeout(() => api.setSettings({ [el.dataset.range]: +el.value }), 60);
   });
@@ -213,7 +214,7 @@ function applyExtrasUI() {
   const ic = idleStatsCfg();
   document.querySelectorAll('#idlePick [data-stat]').forEach(b => b.classList.toggle('on', !!ic[b.dataset.stat]));
   document.querySelectorAll('[data-range]').forEach(el => {
-    const v = s[el.dataset.range] ?? ({ deskEqIntensity: 60, fxSensitivity: 50 })[el.dataset.range] ?? 45;
+    const v = s[el.dataset.range] ?? ({ deskEqIntensity: 60, fxSensitivity: 50, sideFadeBg: 95, sideFadeFg: 85 })[el.dataset.range] ?? 45;
     if (document.activeElement !== el) { el.value = v; el.style.setProperty('--p', v + '%'); $(el.dataset.out).textContent = v + '%'; }
   });
   const pl = partyLights();
@@ -387,12 +388,13 @@ function addNotif(n, silent) {
   ALERTS.list.sort((a, b) => b.time - a.time);
   if (ALERTS.list.length > 60) ALERTS.list.length = 60;
   if (!silent && !n.initial) {
-    if (!(S.mode === 'expanded' && S.tab === 'alerts')) ALERTS.unread++;
+    if (!(S.mode === 'expanded' && (S.tab === 'alerts' || S.tab === 'overview'))) ALERTS.unread++;   // seen right away
     if (typeof focusQuiet === 'function' && focusQuiet()) LIVE.held++;   // quiet while focusing
     else peekNotif(n);
   }
   renderAlertBadge();
   if (S.tab === 'alerts') renderAlerts();
+  if (typeof renderOverview === 'function') renderOverview();
 }
 
 function peekNotif(n) {
@@ -656,7 +658,9 @@ const SUN = {
   beams: [], rings: [], color: '', colorAt: 0,
 };
 
-function sunVisible() { return S.mode === 'collapsed' && isPlaying() && !!$('cArt') && (S.settings.artFx || 'sun') !== 'none'; }
+// not during a full-screen movie (Fade mode), even while hovered: the glow and sparks would flicker over the
+// picture, and on hover the pill opens a moment later anyway, so the orb would only flash for a split second
+function sunVisible() { return S.mode === 'collapsed' && !S.fsDim && isPlaying() && !!$('cArt') && (S.settings.artFx || 'sun') !== 'none'; }
 function sparkEnsure() {
   if (!SUN.raf && sunVisible()) { SUN.last = 0; SUN.raf = requestAnimationFrame(sunFrame); }
 }

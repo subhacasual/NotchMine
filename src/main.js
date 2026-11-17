@@ -15,6 +15,7 @@ const phone = require('./phone');
 // ------------------------------------------------------------------ constants
 const WIN_W = 820;   // transparent canvas; the visible notch is drawn inside it
 const WIN_H = 360;
+const STACK_H = 1000; // Stacked layout: the panel is a tall column (as tall as the screen's work area allows)
 const ASSETS = path.join(__dirname, '..', 'assets');
 
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
@@ -30,7 +31,7 @@ const DEFAULTS = {
   showSeconds: false,
   launchAtLogin: false,
   clipboardHistory: true,
-  hideInFullscreen: true,
+  fullscreenMode: 'dim',   // a full-screen app (movie, game) on the notch's screen: 'show' | 'dim' (thin + see-through until hovered) | 'hide'
   theme: 'midnight',        // midnight | graphite | glass | aurora
   accentMode: 'auto',       // auto (album art) | purple | blue | teal | green | orange | pink | red
   scale: 1,                 // 0.9 | 1 | 1.15 | 1.3
@@ -51,6 +52,7 @@ const DEFAULTS = {
   artFx: 'sun',             // music icon effect while playing: 'sun' | 'orb' | 'none' (more can be added)
   fxSensitivity: 50,        // 0-100: how strongly the sun / orb reacts (sparks, beat bursts, orb spin)
   shape: 'notch',           // 'notch' = glued to the top edge, 'island' = floating pill
+  layout: 'tabs',           // opened panel: 'tabs' = one wide section at a time | 'stacked' = every section in a tall column
   partyScreens: 'all',      // party mode on: 'all' screens | 'notch' (the notch's screen) | 'main'
   partyTheme: 'club',       // 'club' (orb/sun + lights) | 'synthwave' | 'warp'
   deskEq: false,            // see-through equalizer along the bottom of the screen
@@ -65,6 +67,9 @@ const DEFAULTS = {
   posY: 0,                  // island shape only: 0 = top … 1 = as low as it can go
   sideMode: true,           // move to the right edge (vertical) while one of sideApps is active
   sideApps: [{ exe: 'chrome.exe', name: 'Google Chrome', path: '' }],
+  sideFade: true,           // side mode: the resting pill is almost see-through until the mouse touches it
+  sideFadeBg: 95,           // 0-100: how see-through the pill's background gets then (100 = gone)
+  sideFadeFg: 85,           // 0-100: how see-through its icons / info get then (100 = gone)
   idleStats: { date: true, weather: true, cpu: true, ram: true, net: true, battery: true, alerts: true },   // idle pill
   idleMinimal: false,       // idle pill shows only sky + time + date + weather (+ urgent things); the rest on hover
   phoneWarned: false,       // user ticked "don't show the phone-drop warning again"
@@ -80,11 +85,18 @@ const DEFAULTS = {
 };
 let settings = { ...DEFAULTS };
 try { settings = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8').replace(/^﻿/, '')) }; } catch { /* first run */ }
+if ('hideInFullscreen' in settings) {   // migrate v1.2 on/off setting (on was the default, so it becomes the new default)
+  settings.fullscreenMode = settings.hideInFullscreen === false ? 'show' : 'dim';
+  delete settings.hideInFullscreen;
+}
+delete settings.sideFadeOpacity;          // early build of side-mode fade: replaced by sideFadeBg / sideFadeFg
+if (!['show', 'dim', 'hide'].includes(settings.fullscreenMode)) settings.fullscreenMode = DEFAULTS.fullscreenMode;
 if ('artAccent' in settings) {   // migrate v1 setting
   if (settings.artAccent === false && settings.accentMode === 'auto') settings.accentMode = 'purple';
   delete settings.artAccent;
 }
 const zoom = () => [0.9, 1, 1.15, 1.3].includes(settings.scale) ? settings.scale : 1;
+const winH = () => (settings.layout === 'stacked' ? STACK_H : WIN_H);   // css px
 
 let saveTimer = null;
 function saveSettings() {
@@ -103,7 +115,8 @@ let tray = null;
 let hitRect = { x: 0, y: 0, width: 0, height: 0 };
 let hovering = false;
 let userHidden = false;
-let fullscreenHidden = false;
+let fullscreenDisplayId = null;   // the display a full-screen foreground app fills (null = none)
+let fullscreenOn = false;         // that display is the notch's
 let pickerOpen = false;
 
 function targetDisplay() {
@@ -120,9 +133,14 @@ const EDGE = 120;                       // css px: closest the pill's centre get
 let anchorCss = WIN_W / 2;              // pill centre inside the window, css px (sent to the renderer)
 const isIsland = () => settings.shape === 'island';
 function xRange(d) { const m = EDGE * zoom(); return [d.bounds.x + m, d.bounds.x + d.bounds.width - m]; }
-function yRange(d) { return [d.bounds.y, d.bounds.y + Math.max(0, d.bounds.height - Math.round(WIN_H * zoom()))]; }
+// Stacked stops at the taskbar, so a tall column never hides under it
+function winHeight(d) {
+  const room = settings.layout === 'stacked' ? d.workArea.y + d.workArea.height - d.bounds.y : d.bounds.height;
+  return Math.min(Math.round(winH() * zoom()), room);
+}
+function yRange(d) { return [d.bounds.y, d.bounds.y + Math.max(0, d.bounds.height - winHeight(d))]; }
 function placeAt(d, cx, y) {
-  const z = zoom(), w = Math.round(WIN_W * z), h = Math.round(WIN_H * z);
+  const z = zoom(), w = Math.round(WIN_W * z), h = winHeight(d);
   const x = Math.round(Math.max(d.bounds.x, Math.min(d.bounds.x + d.bounds.width - w, cx - w / 2)));
   const top = isIsland() ? Math.round(y ?? d.bounds.y) : d.bounds.y;
   win.setBounds({ x, y: top, width: w, height: h });
@@ -161,7 +179,9 @@ function evaluateSide() {
   const m = lastFg;
   let on = false;
   // side mode only while a listed app is in front AND maximized, on the notch's screen
-  if (m && m.max && settings.sideMode && (settings.sideApps || []).some(a => a.exe === m.exe)) {
+  // …but not while a full-screen app (a movie) fills that screen: then the notch stays at the top as a thin line
+  const fsQuiet = fullscreenOn && settings.fullscreenMode !== 'show';
+  if (m && m.max && !fsQuiet && settings.sideMode && (settings.sideApps || []).some(a => a.exe === m.exe)) {
     const c = screen.screenToDipPoint({ x: Math.round((m.l + m.r) / 2), y: Math.round((m.t + m.b) / 2) });
     on = screen.getDisplayNearestPoint(c).id === targetDisplay().id;
   }
@@ -178,7 +198,13 @@ function placeWindow() {
   if (!win || dragTimer) return;
   const d = targetDisplay();
   if (sideActive) {
-    const z = zoom(), w = Math.round(WIN_W * z), h = Math.round(Math.min(SIDE_H * z, d.bounds.height));
+    const z = zoom(), w = Math.round(WIN_W * z);
+    if (settings.layout === 'stacked') {                     // the tall column: centred in the work area
+      const a = d.workArea, h = Math.round(Math.min(STACK_H * z, a.height));
+      win.setBounds({ x: d.bounds.x + d.bounds.width - w, y: Math.round(a.y + (a.height - h) / 2), width: w, height: h });
+      return;
+    }
+    const h = Math.round(Math.min(SIDE_H * z, d.bounds.height));
     win.setBounds({ x: d.bounds.x + d.bounds.width - w, y: Math.round(d.bounds.y + (d.bounds.height - h) / 2), width: w, height: h });
     return;
   }
@@ -223,7 +249,7 @@ function dragEnd() {
   settings.posY = isIsland() && y1 > y0 ? Math.round(((dragY - y0) / (y1 - y0)) * 1000) / 1000 : 0;
   saveSettings();
   send('settings', settings);
-  syncDeskEq();                    // the equalizer follows the notch to its screen
+  refreshVisibility();             // full-screen state + the equalizer follow the notch to its screen
   if (tray) tray.setContextMenu(buildTrayMenu());
 }
 
@@ -236,7 +262,7 @@ function applyScale() {
 function createWindow() {
   win = new BrowserWindow({
     width: WIN_W,
-    height: WIN_H,
+    height: winH(),
     frame: false,
     transparent: true,
     resizable: false,
@@ -264,7 +290,7 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.once('ready-to-show', () => { win.showInactive(); });
   win.webContents.on('did-finish-load', applyScale);
-  win.on('blur', () => send('blur'));
+  win.on('blur', () => { send('blur'); onNotchBlur(); });
   // Keep links/popups out of the notch
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('will-navigate', e => e.preventDefault());
@@ -285,8 +311,40 @@ function setVisible(visible) {
   if (!visible && win.isVisible()) win.hide();
 }
 function refreshVisibility() {
-  setVisible(!userHidden && !partyWins.length && !(fullscreenHidden && settings.hideInFullscreen));
+  fullscreenOn = fullscreenDisplayId !== null && fullscreenDisplayId === targetDisplay().id;
+  evaluateSide();                                           // side mode steps aside during full-screen (no-op if unchanged)
+  setVisible(!userHidden && !partyWins.length && !(fullscreenOn && settings.fullscreenMode === 'hide'));
+  send('fullscreen', fullscreenOn && settings.fullscreenMode === 'dim');   // renderer fades to a thin line
   syncDeskEq();
+}
+function onFullscreen(msg) {
+  let id = null;
+  const m = /^(-?\d+),(-?\d+),(-?\d+),(-?\d+)$/.exec(msg.monitor || '');
+  if (msg.value && m) {
+    const [l, t, r, b] = m.slice(1).map(Number);
+    try { id = screen.getDisplayMatching(screen.screenToDipRect(null, { x: l, y: t, width: r - l, height: b - t })).id; }
+    catch { id = targetDisplay().id; }
+  } else if (msg.value) id = targetDisplay().id;            // older bridge: no monitor info
+  clearTimeout(fsBlurTimer);
+  if (!app.isPackaged) console.log('[fullscreen]', msg.value ? `ON display ${id} (notch on ${targetDisplay().id})` : 'off', `mode=${settings.fullscreenMode}`);
+  // clicking the notch makes it the foreground window; that isn't "left full-screen".
+  // Remember it: the bridge only reports changes, so once the notch loses focus to a normal window
+  // nothing new arrives; apply it then (unless the movie took the foreground back and reported in).
+  if (id === null && win && !win.isDestroyed() && win.isFocused()) { fsPendingExit = true; return; }
+  fsPendingExit = false;
+  fullscreenDisplayId = id;
+  refreshVisibility();
+}
+let fsPendingExit = false, fsBlurTimer = 0;
+function onNotchBlur() {
+  if (!fsPendingExit) return;
+  clearTimeout(fsBlurTimer);
+  fsBlurTimer = setTimeout(() => {
+    if (!fsPendingExit) return;
+    fsPendingExit = false;
+    fullscreenDisplayId = null;
+    refreshVisibility();
+  }, 1500);                                                 // the bridge checks about once a second
 }
 
 // ------------------------------------------------------------------ desktop equalizer (click-through bars along the bottom)
@@ -299,7 +357,7 @@ function eqBounds(d) {
 }
 function syncDeskEq() {
   if (!app.isReady()) return;
-  const want = settings.deskEq && !partyWins.length && !(fullscreenHidden && settings.hideInFullscreen);
+  const want = settings.deskEq && !partyWins.length && !(fullscreenDisplayId !== null && settings.fullscreenMode !== 'show');
   const displays = !want ? [] : settings.deskEqScreens === 'all' ? screen.getAllDisplays() : [targetDisplay()];
   const ids = new Set(displays.map(d => d.id));
   for (const e of eqWins.slice()) {
@@ -495,8 +553,7 @@ function handleBridge(msg) {
       break;
     case 'log': console.log('[bridge]', msg.message); break;
     case 'fullscreen':
-      fullscreenHidden = !!msg.value;
-      refreshVisibility();
+      onFullscreen(msg);
       break;
     case 'media': {
       if (msg.active) { const label = webAppName(msg.app); if (label) msg.appLabel = label; }
@@ -759,14 +816,15 @@ function buildTrayMenu() {
         label: `Display ${i + 1} (${d.size.width}×${d.size.height})${d.id === screen.getPrimaryDisplay().id ? ' · primary' : ''}`,
         type: 'radio',
         checked: (settings.displayId ?? screen.getPrimaryDisplay().id) === d.id,
-        click: () => { settings.displayId = d.id; saveSettings(); placeWindow(); },
+        click: () => { settings.displayId = d.id; saveSettings(); placeWindow(); refreshVisibility(); },
       })),
     },
     {
-      label: 'Hide in full-screen apps',
-      type: 'checkbox',
-      checked: settings.hideInFullscreen,
-      click: m => { settings.hideInFullscreen = m.checked; saveSettings(); refreshVisibility(); send('settings', settings); },
+      label: 'In full-screen apps',
+      submenu: [['show', 'Show normally'], ['dim', 'Fade to a thin line'], ['hide', 'Hide']].map(([v, label]) => ({
+        label, type: 'radio', checked: settings.fullscreenMode === v,
+        click: () => { settings.fullscreenMode = v; saveSettings(); refreshVisibility(); send('settings', settings); },
+      })),
     },
     {
       label: 'Launch at login',
@@ -812,7 +870,7 @@ ipcMain.on('brightness-refresh', () => bridgeCmd('bright get'));
 
 ipcMain.handle('side-apps', async () => Promise.all(recentApps.map(async a => ({ ...a, icon: await exeIcon(a.path) }))));
 ipcMain.handle('app-icon', (_e, p) => exeIcon(p));
-ipcMain.handle('init', () => ({ side: sideActive, anchor: anchorCss, settings, state: lastState, clipboard: clipHistory, notifs: notifLog, recent, phone: phone.status() }));
+ipcMain.handle('init', () => ({ side: sideActive, fullscreenDim: fullscreenOn && settings.fullscreenMode === 'dim', anchor: anchorCss, settings, state: lastState, clipboard: clipHistory, notifs: notifLog, recent, phone: phone.status() }));
 
 // v3: mixer, mic, lyrics, captures, phone drop
 ipcMain.on('mixer-get', () => bridgeCmd('mixer get'));
@@ -890,15 +948,15 @@ ipcMain.handle('settings-set', (_e, patch) => {
   const before = { ...settings };
   Object.assign(settings, patch);
   if ('scale' in patch) applyScale();
-  if ('posX' in patch || 'posY' in patch || 'displayId' in patch || 'shape' in patch) placeWindow();
-  if (['deskEq', 'deskEqPos', 'deskEqScreens', 'displayId', 'hideInFullscreen'].some(k => k in patch)) syncDeskEq();
+  if ('posX' in patch || 'posY' in patch || 'displayId' in patch || 'shape' in patch || 'layout' in patch) placeWindow();
+  if (['deskEq', 'deskEqPos', 'deskEqScreens', 'displayId', 'fullscreenMode'].some(k => k in patch)) syncDeskEq();
   if ('sideMode' in patch || 'sideApps' in patch || 'displayId' in patch) evaluateSide();
   if ('notifications' in patch) {
     bridgeCmd(`notif ${settings.notifications ? 'on' : 'off'}`);
     if (!settings.notifications) notifLog.length = 0;
   }
   if ('launchAtLogin' in patch && patch.launchAtLogin !== before.launchAtLogin) applyLoginItem(patch.launchAtLogin);
-  if ('hideInFullscreen' in patch) refreshVisibility();
+  if ('fullscreenMode' in patch || 'displayId' in patch) refreshVisibility();
   if ('clipboardHistory' in patch && !patch.clipboardHistory) { clipHistory = []; send('clipboard', clipHistory); }
   saveSettings();
   if (tray) tray.setContextMenu(buildTrayMenu());
@@ -1153,7 +1211,16 @@ async function runSnapshots(dir) {
       await wait(400);
       console.log('[side] active:', sideActive, 'window:', JSON.stringify(win.getBounds()));
     }],
-    ['side-idle', `new Promise(r => setTimeout(r, 900))`],
+    ['side-idle', `new Promise(r => setTimeout(r, 900))`],    // see-through while the mouse is away
+    ['side-hover', async () => {                               // mouse on it: back to normal (open on click only, so it stays a pill)
+      const delay = await js(`__notchDebug.S.settings.openDelay ?? 140`);
+      await js(`__notchDebug.S.settings.openDelay = -1`);
+      send('hover', true);
+      await wait(700);
+      await snap('side-hover-on');
+      send('hover', false);                                    // …and see-through again once it leaves (the step's own shot)
+      await js(`__notchDebug.S.settings.openDelay = ${JSON.stringify(delay)}`);
+    }],
     ['side-timer', `__notchDebug.tmSet('focus'); __notchDebug.tmStart()`],
     ['side-peek', `__notchDebug.peekVolume()`],
     ['side-music-wait', `__notchDebug.T.running = false; __notchDebug.tmSet('focus'); __notchDebug.onMedia({type:'media',active:true,app:'Spotify.exe',title:'Neon Skyline',artist:'Demo Artist',status:'Playing',position:62,duration:244,updatedAt:Date.now(),canPrev:true,canNext:true,canSeek:true,thumbId:5,thumb:null}); new Promise(r => setTimeout(r, 4200))`],
@@ -1277,6 +1344,41 @@ async function runSnapshots(dir) {
     ['peek-track', `__notchDebug.peekTrack()`],
     ['peek-volume', `__notchDebug.collapse(); setTimeout(()=>__notchDebug.peekVolume(), 50)`],
     ['timer-collapsed', `__notchDebug.collapse(); __notchDebug.tmSet('focus'); __notchDebug.tmStart()`],
+    // ---- Stacked layout: every section in a tall column; a section's title opens its full page
+    ['stacked-idle', `__notchDebug.T.running = false; __notchDebug.tmSet('focus'); __notchDebug.onMedia({ type: 'media', active: false });
+      __notchDebug.S.pinned = false; __notchDebug.collapse(); __notchDebug.patchSettings({ layout: 'stacked' });
+      setTimeout(() => { __notchDebug.S.pinned = true; __notchDebug.expand(); }, 300)`],
+    ['stacked-music', `__notchDebug.onMedia({ type: 'media', active: true, app: 'Spotify.exe', title: 'Neon Skyline', artist: 'Demo Artist', album: 'Demo', status: 'Playing', position: 73, duration: 243, updatedAt: Date.now(), canPrev: true, canNext: true, canSeek: true, thumbId: 4242, thumb: null });
+      ${fakeNotifs}.forEach(n => __notchDebug.addNotif(n, true)); __notchDebug.tmStart();
+      __notchDebug.S.clipboard = ['Meeting moved to 4 PM, room 3B', 'https://github.com/example/project/pull/42', 'npm run dist']; renderClipboard();
+      const c = document.createElement('canvas'); c.width = 160; c.height = 90; const x = c.getContext('2d'); const g = x.createLinearGradient(0, 0, 160, 90); g.addColorStop(0, '#0a84ff'); g.addColorStop(1, '#bf5af2'); x.fillStyle = g; x.fillRect(0, 0, 160, 90);
+      addRecent({ kind: 'download', path: 'C:/demo/report.pdf', name: 'Quarterly report.pdf', size: 2483000, time: Date.now() - 60000, icon: null });
+      addRecent({ kind: 'capture', path: 'C:/demo/shot.png', name: 'Screenshot 16.20.png', time: Date.now(), w: 1920, h: 1080, thumb: c.toDataURL() })`],
+    ['stacked-detail', `__notchDebug.setTab('apps')`],
+    ['stacked-back', `document.getElementById('stackBack').click()`],
+    ['stacked-home', `__notchDebug.setTab('home')`],
+    ['stacked-tools', `__notchDebug.setTab('tools')`],
+    ['stacked-system', `__notchDebug.setTab('system')`],
+    ['stacked-shelf', `__notchDebug.setTab('shelf')`],
+    ['stacked-alerts', `__notchDebug.setTab('alerts')`],
+    ['stacked-settings', `__notchDebug.setTab('settings')`],
+    // the panel must settle (no resize loop) on every settings section, e.g. Side mode
+    ['stacked-settings-side', `document.querySelector('#setNav [data-sec=side]').click();
+      new Promise(r => { const hs = []; const t = setInterval(() => { hs.push(Math.round(document.getElementById('island').getBoundingClientRect().height)); if (hs.length >= 20) { clearInterval(t); console.warn('SETTLE ' + hs.join(' ')); r(); } }, 100); })`],
+    // a page's content is equally wide with or without a scrollbar (else the panel can resize-loop)
+    ['stacked-width-check', `(() => { const p = document.querySelector('.page[data-page=settings]'); const w = () => p.clientWidth - parseFloat(getComputedStyle(p).paddingRight);
+      const a = w(); p.style.bottom = '60%'; const b = w(), scrolls = p.scrollHeight > p.clientHeight; p.style.bottom = '';
+      console.warn('WIDTH ' + JSON.stringify({ normal: a, withScrollbar: b, scrolls, overview: document.getElementById('ov').offsetWidth })); })()`],
+    ['stacked-settings-look', `document.querySelector('#setNav [data-sec=look]').click()`],
+    ['stacked-side', async () => {
+      await js(`__notchDebug.S.pinned = false; __notchDebug.collapse()`);
+      sideTestNoWatch = true;
+      const b = targetDisplay().bounds;
+      handleBridge({ type: 'foreground', hwnd: 1, max: true, exe: 'chrome.exe', name: 'Google Chrome', path: '', cls: 'Chrome_WidgetWin_1', l: b.x, t: b.y, r: b.x + b.width, b: b.y + b.height });
+      await wait(600);
+      await js(`__notchDebug.S.pinned = true; __notchDebug.expand()`);
+    }],
+    ['stacked-tabs-again', `__notchDebug.S.pinned = false; __notchDebug.collapse(); __notchDebug.patchSettings({ layout: 'tabs' }); setTimeout(() => { __notchDebug.S.pinned = true; __notchDebug.expand('home'); }, 300)`],
   ];
   for (const [name, code] of plan) {
     if (steps.length && !steps.includes(name)) continue;

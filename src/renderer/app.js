@@ -7,6 +7,7 @@ const island = $('island');
 const layers = { collapsed: $('compact'), peek: $('peek'), expanded: $('expanded') };
 
 const EXPANDED = [740, 296];
+const STACK_W = 384;          // Stacked layout: width of the tall column
 const SIDE_W = 52;            // width of the vertical pill in side mode
 const PEEK_H = 62;
 
@@ -144,12 +145,47 @@ function shortRate(b) {
   return `${(b / 1048576).toFixed(1)} MB/s`;
 }
 
+// Stacked layout (Settings → General → Layout): opening shows every section in a tall column
+// (the "overview" page). A section's title opens its full page in the same column (‹ goes back);
+// every page is laid out top to bottom and the panel is as tall as the page (up to the screen).
+function isStacked() { return S.settings.layout === 'stacked'; }
+// how tall a page's content is: its cards, or an open overlay (e.g. the phone-drop panel)
+function pageContentHeight(page) {
+  if (!page) return 0;
+  if (page.dataset.page === 'overview') return $('ov').offsetHeight;
+  let h = 0;
+  for (const el of page.children) {
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none') continue;
+    if (cs.position === 'absolute') { if (cs.visibility === 'visible') h = Math.max(h, el.scrollHeight); continue; }
+    h = Math.max(h, el.offsetTop + el.offsetHeight);
+  }
+  return h;
+}
+function panelSize() {
+  if (!isStacked()) return EXPANDED;
+  layers.expanded.style.setProperty('--exp-w', STACK_W + 'px');   // width first: the height depends on it
+  const page = document.querySelector(`.page[data-page="${S.tab}"]`);
+  const natural = 10 + 32 + 8 + pageContentHeight(page) + 14;      // padding, header, gap, content, padding (see #expanded)
+  const top = S.side ? 16 : document.documentElement.dataset.shape === 'island' ? 10 : 0;
+  const max = (window.innerHeight || 720) - top - 16;
+  return [STACK_W, Math.max(160, Math.min(natural, max))];
+}
+
 function applySize() {
   let w, h;
-  if (S.mode === 'expanded') [w, h] = EXPANDED;
+  if (S.mode === 'expanded') {
+    [w, h] = panelSize();
+    layers.expanded.style.setProperty('--exp-w', w + 'px');
+    layers.expanded.style.setProperty('--exp-h', h + 'px');
+  }
+  else if (isGhost()) [w, h] = S.side ? GHOST_SIDE : GHOST;   // full-screen movie: just a faint thin line (pop-ups too)
   else if (S.mode === 'peek') { w = S.peekWidth; h = S.peekHeight || PEEK_H; }
   else if (S.side) { w = SIDE_W; h = S.sideLen || 240; }  // side mode: an upright vertical column
   else { w = compactWidth(); h = 34; }
+  island.classList.toggle('ghost', isGhost());
+  applySideFade();
+  if (typeof sparkEnsure === 'function') sparkEnsure();   // sun / orb stop while faded, come back on hover
   island.style.width = w + 'px';
   island.style.height = h + 'px';
   if (S.side) {
@@ -173,6 +209,30 @@ function applySize() {
     trackHitRect();                       // the clickable area must follow the slide, not just size changes
   }
 }
+// Full-screen app (movie, game) on the notch's screen + Settings → "Full-screen apps: Fade":
+// the pill shrinks to a faint thin line and comes back to normal while the mouse is on it.
+const GHOST = [128, 5], GHOST_SIDE = [5, 128];
+function isGhost() { return !!S.fsDim && !S.hover && S.mode !== 'expanded'; }
+function setFullscreenDim(on) {
+  on = !!on;
+  if (on === !!S.fsDim) return;
+  S.fsDim = on;
+  applySize();
+  trackHitRect();
+}
+api.on('fullscreen', setFullscreenDim);
+// Side mode + Settings → Side mode → "See-through when idle": the resting pill turns almost invisible
+// so it doesn't hide the page behind it; it comes back as it was the moment the mouse touches it.
+// Pop-ups (volume, notifications…) and the open panel always show normally.
+function isSideFaded() { return !!S.side && S.settings.sideFade !== false && !S.hover && S.mode === 'collapsed' && !isGhost(); }
+function applySideFade() {
+  const root = document.documentElement;
+  // the sliders are "transparency": 0 = solid, 100 = invisible (it still opens when the mouse reaches it)
+  root.style.setProperty('--side-bg-op', 1 - clamp((S.settings.sideFadeBg ?? 95) / 100, 0, 1));
+  root.style.setProperty('--side-fg-op', 1 - clamp((S.settings.sideFadeFg ?? 85) / 100, 0, 1));
+  root.dataset.sideFade = isSideFaded() ? '1' : '';
+}
+
 let hitTrackUntil = 0;
 function trackHitRect() {
   const running = performance.now() < hitTrackUntil;
@@ -209,6 +269,7 @@ function expand(tab) {
   clearTimeout(peekTimer);
   clearTimeout(enterTimer);
   if (tab) setTab(tab);
+  else if (isStacked() && S.mode !== 'expanded') setTab('overview');   // Stacked always opens on every section
   setMode('expanded');
 }
 
@@ -249,6 +310,8 @@ function reportHitRect() {
 api.on('conn', c => { S.conn = c; renderCompact(); });
 api.on('hover', h => {
   S.hover = h;
+  if (S.fsDim && S.mode !== 'expanded') { applySize(); trackHitRect(); }   // thin line ⇄ normal pill
+  applySideFade();                                      // side mode: see-through ⇄ normal pill
   if (hoverRevealsStats()) renderCompact();             // minimal pill + click-to-open: reveal the details while hovered
   if (!h) S.suppressExpand = false;
   // interactive pop-ups (screenshot, download, USB) stay put while the mouse is on them
@@ -285,12 +348,17 @@ document.addEventListener('keydown', e => {
 });
 
 // ================================================================== tabs + header
+const TAB_NAMES = { home: 'Home', apps: 'Apps', shelf: 'Shelf', tools: 'Focus', system: 'System', alerts: 'Alerts', settings: 'Settings' };
 function setTab(tab) {
   S.tab = tab;
+  island.dataset.view = tab === 'overview' ? 'overview' : '';
+  if (tab !== 'overview') $('hdrLabel').textContent = TAB_NAMES[tab] || '';   // Stacked: the page's name in the header
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.dataset.page === tab));
-  if (tab === 'system') { api.refreshBrightness(); renderSys(); }
+  if (tab === 'system' || tab === 'overview') { api.refreshBrightness(); renderSys(); }
   if (typeof onTabShown === 'function') onTabShown(tab);
+  if (tab === 'overview' && typeof renderOverview === 'function') renderOverview(true);
+  if (S.mode === 'expanded') applySize();          // overview <-> a full page changes the panel's shape
 }
 document.querySelectorAll('.tab-btn').forEach(b => {
   b.addEventListener('click', () => setTab(b.dataset.tab));
@@ -558,6 +626,7 @@ function renderMediaCard() {
   $('mcProgress').classList.toggle('hidden', !(active && m.duration > 0));
   $('mcBar').classList.toggle('noseek', !m.canSeek);
   renderProgress();
+  if (typeof renderOverview === 'function') renderOverview();
 }
 
 function renderProgress() {
@@ -688,6 +757,7 @@ function startClock() {
     renderClock(false);
     renderCompact();
     if (S.mode === 'expanded' && S.tab === 'home' && isPlaying()) renderProgress();
+    if (typeof renderOverview === 'function') renderOverview();
   };
   tick();
   // align to the second boundary, then refresh a few times a second for smooth progress
@@ -729,9 +799,9 @@ async function fetchWeather() {
 }
 function renderWeather(data) {
   const c = data.current, d = data.daily;
-  S.weather = { temp: Math.round(c.temperature_2m), code: c.weather_code, isDay: c.is_day === 1 };   // for the idle pill
-  if (typeof renderCompact === 'function') renderCompact();
   const w = wmo(c.weather_code, c.is_day === 1);
+  S.weather = { temp: Math.round(c.temperature_2m), code: c.weather_code, isDay: c.is_day === 1, text: w.text };   // for the idle pill + overview
+  if (typeof renderCompact === 'function') renderCompact();
   $('weatherCard').classList.toggle('night', c.is_day !== 1);
   $('wxIcon').textContent = w.emoji;
   $('wxTemp').textContent = `${Math.round(c.temperature_2m)}°`;
@@ -830,6 +900,7 @@ function renderTimer() {
   const n = sessionsToday();
   $('tmSessions').textContent = `${n} focus session${n === 1 ? '' : 's'} today`;
   renderCompact();
+  if (typeof renderOverview === 'function') renderOverview();
 }
 setInterval(() => {
   if (!T.running) return;
@@ -933,6 +1004,7 @@ function renderVolume() {
   if (!volDragging) { $('volSlider').value = v.muted ? 0 : pct; setRangeFill($('volSlider')); }
   $('volVal').textContent = v.muted ? 'Muted' : pct + '%';
   $('muteBtn').innerHTML = icon(v.muted || pct === 0 ? 'mute' : pct < 50 ? 'volumeLow' : 'volume');
+  if (typeof renderOverview === 'function') renderOverview();
 }
 $('volSlider').addEventListener('input', e => {
   volDragging = true;
@@ -1049,6 +1121,7 @@ api.on('brightness', b => {
   if (!brtDragging) { $('brtSlider').value = b.level; setRangeFill($('brtSlider')); }
   $('brtVal').textContent = b.level + '%';
   renderCompact();
+  if (typeof renderOverview === 'function') renderOverview();
 });
 $('brtSlider').addEventListener('input', e => {
   brtDragging = true;
@@ -1133,23 +1206,25 @@ function renderShelf() {
   grid.innerHTML = '';
   $('shelfZone').classList.toggle('empty', S.shelf.length === 0);
   $('shelfBadge').textContent = S.shelf.length || '';
-  for (const p of S.shelf) {
-    const el = document.createElement('div');
-    el.className = 'shelf-item';
-    el.draggable = true;
-    el.title = `${p}\nDouble-click to open · drag out to use`;
-    el.innerHTML = `<img alt=""><span>${esc(baseName(p))}</span><button class="rm" title="Remove">${icon('x')}</button>`;
-    fileIcon(p).then(src => { if (src) el.querySelector('img').src = src; });
-    el.addEventListener('dragstart', e => { e.preventDefault(); api.startDrag(p); });
-    el.addEventListener('dblclick', () => api.openPath(p));
-    el.addEventListener('contextmenu', e => { e.preventDefault(); api.showInFolder(p); });
-    el.querySelector('.rm').addEventListener('click', e => {
-      e.stopPropagation();
-      S.shelf = S.shelf.filter(x => x !== p);
-      saveShelf(); renderShelf();
-    });
-    grid.appendChild(el);
-  }
+  for (const p of S.shelf) grid.appendChild(shelfItemEl(p));
+  if (typeof renderOverview === 'function') renderOverview();
+}
+function shelfItemEl(p) {
+  const el = document.createElement('div');
+  el.className = 'shelf-item';
+  el.draggable = true;
+  el.title = `${p}\nDouble-click to open · drag out to use`;
+  el.innerHTML = `<img alt=""><span>${esc(baseName(p))}</span><button class="rm" title="Remove">${icon('x')}</button>`;
+  fileIcon(p).then(src => { if (src) el.querySelector('img').src = src; });
+  el.addEventListener('dragstart', e => { e.preventDefault(); api.startDrag(p); });
+  el.addEventListener('dblclick', () => api.openPath(p));
+  el.addEventListener('contextmenu', e => { e.preventDefault(); api.showInFolder(p); });
+  el.querySelector('.rm').addEventListener('click', e => {
+    e.stopPropagation();
+    S.shelf = S.shelf.filter(x => x !== p);
+    saveShelf(); renderShelf();
+  });
+  return el;
 }
 async function loadShelf() {
   const list = Array.isArray(S.settings.shelf) ? S.settings.shelf : [];
@@ -1161,28 +1236,40 @@ async function loadShelf() {
 $('shelfClear').addEventListener('click', () => { S.shelf = []; saveShelf(); renderShelf(); });
 
 // Drag & drop: files go to the Shelf; on the Apps tab files and links become shortcuts.
+// In the Stacked overview the section under the cursor decides (Apps, else Shelf).
 const dragTypes = e => Array.from((e.dataTransfer && e.dataTransfer.types) || []);
 const hasFiles = e => dragTypes(e).includes('Files');
 const hasLink = e => dragTypes(e).includes('text/uri-list');
 let dragLeaveTimer = 0;
+function dropTab(e) {
+  if (S.tab !== 'overview') return S.tab;
+  if (!hasFiles(e)) return 'apps';
+  return e.target && e.target.closest && e.target.closest('#ovApps') ? 'apps' : 'shelf';
+}
+function markDrop(e) {
+  const t = dropTab(e), ov = S.tab === 'overview';
+  $('shelfZone').classList.toggle('drag-over', !ov && t === 'shelf');
+  $('appsCard').classList.toggle('drag-over', !ov && t === 'apps');
+  $('ovShelf').classList.toggle('drag-over', ov && t === 'shelf');
+  $('ovApps').classList.toggle('drag-over', ov && t === 'apps');
+}
 document.addEventListener('dragenter', e => {
   if (!hasFiles(e) && !hasLink(e)) return;
   e.preventDefault();
   clearTimeout(dragLeaveTimer);
   S.dragActive = true;
   const wanted = !hasFiles(e) ? 'apps' : (S.tab === 'apps' ? 'apps' : 'shelf');
-  if (S.mode !== 'expanded') expand(wanted);
+  if (isStacked() && (S.mode !== 'expanded' || S.tab === 'overview')) { if (S.mode !== 'expanded') expand(); }
+  else if (S.mode !== 'expanded') expand(wanted);
   else if (S.tab !== 'shelf' && S.tab !== 'apps') setTab(wanted);
-  $('shelfZone').classList.toggle('drag-over', S.tab === 'shelf');
-  $('appsCard').classList.toggle('drag-over', S.tab === 'apps');
+  markDrop(e);
 });
 document.addEventListener('dragover', e => {
   if (!hasFiles(e) && !hasLink(e)) return;
   e.preventDefault();
-  e.dataTransfer.dropEffect = S.tab === 'apps' ? 'link' : 'copy';
+  e.dataTransfer.dropEffect = dropTab(e) === 'apps' ? 'link' : 'copy';
   clearTimeout(dragLeaveTimer);
-  $('shelfZone').classList.toggle('drag-over', S.tab === 'shelf');
-  $('appsCard').classList.toggle('drag-over', S.tab === 'apps');
+  markDrop(e);
 });
 document.addEventListener('dragleave', () => {
   clearTimeout(dragLeaveTimer);
@@ -1190,18 +1277,18 @@ document.addEventListener('dragleave', () => {
 });
 function endDrag() {
   S.dragActive = false;
-  $('shelfZone').classList.remove('drag-over');
-  $('appsCard').classList.remove('drag-over');
+  for (const id of ['shelfZone', 'appsCard', 'ovShelf', 'ovApps']) $(id).classList.remove('drag-over');
   if (!S.hover) scheduleCollapse(600);
 }
 document.addEventListener('drop', e => {
   e.preventDefault();
   clearTimeout(dragLeaveTimer);
   const paths = Array.from(e.dataTransfer.files || []).map(f => api.pathForFile(f)).filter(Boolean);
-  if (S.tab === 'apps') {
+  const target = dropTab(e);
+  if (target === 'apps') {
     const links = paths.length ? [] : (e.dataTransfer.getData('text/uri-list') || '').split(/\r?\n/).filter(l => l && !l.startsWith('#'));
     addShortcutsFromDrop([...paths, ...links]);
-  } else if (S.tab === 'shelf' || paths.length) {
+  } else if (target === 'shelf' || paths.length) {
     let added = 0;
     for (const p of paths) if (!S.shelf.includes(p)) { S.shelf.push(p); added++; }
     if (added) { saveShelf(); renderShelf(); }
@@ -1212,6 +1299,7 @@ document.addEventListener('drop', e => {
 // ================================================================== clipboard history
 api.on('clipboard', list => { S.clipboard = list; renderClipboard(); });
 function renderClipboard() {
+  if (typeof renderOverview === 'function') renderOverview();
   const box = $('clipList');
   if (!S.settings.clipboardHistory) { box.innerHTML = '<div class="clip-empty">Clipboard history is off (Settings)</div>'; return; }
   if (!S.clipboard.length) { box.innerHTML = '<div class="clip-empty">Copied text will show up here</div>'; return; }
@@ -1240,6 +1328,10 @@ function applySettingsUI() {
   $('setBreak').value = s.pomodoroBreak || 5;
   if (document.activeElement !== $('notes')) $('notes').value = s.notes || '';
   $('notesCount').textContent = (s.notes || '').length ? `${s.notes.length} chars` : '';
+  document.documentElement.dataset.layout = isStacked() ? 'stacked' : 'tabs';
+  if (!isStacked() && S.tab === 'overview') setTab('home');
+  if (S.mode === 'expanded') applySize();
+  applySideFade();
   compactKey = '';
   renderClock(true);
   renderCompact();
