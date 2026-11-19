@@ -19,6 +19,31 @@ document.querySelectorAll('.seg[data-seg]').forEach(seg => seg.addEventListener(
   if (seg.dataset.seg === 'posX') patch.posY = 0;            // Left / Center / Right = along the top
   patchSettings(patch);
 }));
+// dropdowns (.dd[data-dd]): the button opens the list (upwards when there's no room below), a pick saves it
+function closeDropdowns(except) { document.querySelectorAll('.dd.open').forEach(d => { if (d !== except) d.classList.remove('open'); }); }
+document.querySelectorAll('.dd[data-dd]').forEach(dd => {
+  const list = dd.querySelector('.dd-list');
+  dd.querySelector('.dd-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    closeDropdowns(dd);
+    if (dd.classList.contains('open')) { dd.classList.remove('open'); return; }
+    const box = (dd.closest('.set-body') || document.body).getBoundingClientRect(), r = dd.getBoundingClientRect();
+    const below = box.bottom - r.bottom - 6, above = r.top - box.top - 6;
+    dd.classList.toggle('up', below < 150 && above > below);
+    list.style.maxHeight = `${Math.max(96, Math.min(220, dd.classList.contains('up') ? above : below))}px`;
+    dd.classList.add('open');
+    list.querySelector('button.active')?.scrollIntoView({ block: 'nearest' });
+  });
+  list.addEventListener('click', e => {
+    const b = e.target.closest('button[data-v]');
+    if (!b) return;
+    e.stopPropagation();
+    dd.classList.remove('open');
+    patchSettings({ [dd.dataset.dd]: b.dataset.v });
+  });
+});
+document.addEventListener('click', () => closeDropdowns());
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDropdowns(); });
 
 // screens to choose from (rebuilt whenever settings are shown, so plugging in a monitor shows up)
 async function renderScreens() {
@@ -161,7 +186,7 @@ function renderHeaderStats() {
   hdrStatsAt = performance.now();
   const parts = [];
   if (NET.cur) parts.push(`<span class="hs"><i>↓</i>${shortRate(NET.cur.rx)}</span><span class="hs"><i>↑</i>${shortRate(NET.cur.tx)}</span>`);
-  if (S.sys) parts.push(`<span class="hs"><i>CPU</i>${S.sys.cpu}%</span><span class="hs"><i>RAM</i>${S.sys.ram}%</span>`);
+  if (S.sys) parts.push(`<span class="hs"><i>CPU</i>${S.sys.cpu}%</span><span class="hs"><i>RAM</i>${S.sys.ram}%</span>${S.sys.gpu != null ? `<span class="hs"><i>GPU</i>${S.sys.gpu}%</span>` : ''}`);
   if (S.batt && hasBattery()) parts.push(`<span class="hs${S.batt.charging ? ' chg' : ''}"><i>${S.batt.charging ? '⚡' : '🔋'}</i>${Math.round(S.batt.level * 100)}%</span>`);
   $('hdrStats').innerHTML = parts.join('<span class="hs-dot">·</span>');
 }
@@ -208,6 +233,12 @@ function applyExtrasUI() {
     const str = seg.dataset.type === 'str';
     const v = str ? String(s[seg.dataset.seg]) : Number(s[seg.dataset.seg]);
     seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', (str ? b.dataset.v : Number(b.dataset.v)) === v));
+  });
+  document.querySelectorAll('.dd[data-dd]').forEach(dd => {
+    const items = [...dd.querySelectorAll('.dd-list button[data-v]')];
+    const cur = items.find(b => b.dataset.v === String(s[dd.dataset.dd])) || items[0];
+    items.forEach(b => b.classList.toggle('active', b === cur));
+    dd.querySelector('.dd-val').textContent = cur ? cur.textContent : '';
   });
   renderScreens();
   $('mcDeskEq').classList.toggle('on', !!s.deskEq);
@@ -389,7 +420,7 @@ function addNotif(n, silent) {
   if (ALERTS.list.length > 60) ALERTS.list.length = 60;
   if (!silent && !n.initial) {
     if (!(S.mode === 'expanded' && (S.tab === 'alerts' || S.tab === 'overview'))) ALERTS.unread++;   // seen right away
-    if (typeof focusQuiet === 'function' && focusQuiet()) LIVE.held++;   // quiet while focusing
+    if ((typeof focusQuiet === 'function' && focusQuiet()) || (typeof gameQuiet === 'function' && gameQuiet())) LIVE.held++;   // quiet while focusing / playing
     else peekNotif(n);
   }
   renderAlertBadge();
@@ -887,7 +918,6 @@ function sunFrame(t) {
     ctx.beginPath(); ctx.roundRect(o - ah, o - ah, ah * 2, ah * 2, 7); ctx.fill();
   }
   ctx.globalCompositeOperation = 'source-over';
-  if (orb) drawOrbNote(ctx, o, b);
 
   if (orb) {   // the orb replaces the square art
     art.style.transform = ''; art.style.boxShadow = ''; art.style.filter = '';
@@ -900,7 +930,7 @@ function sunFrame(t) {
 }
 
 // ================================================================== "orb": a holographic globe (ported from the author's Friday project), shrunk into the pill
-// A globe of glowing rings (some dashed, some partial arcs) around a white-hot core, an inner sphere
+// A globe of glowing rings (some dashed, some partial arcs) with an inner sphere
 // turning the other way, a couple of outer orbits and drifting dust. Each piece of line is shaded by
 // its depth (far side dim) and everything is added together as light, so piled-up light burns white.
 const ORB_R = 12.5;                  // css px radius of the globe
@@ -964,7 +994,7 @@ const ORB = (() => {
 
 function drawOrb(ctx, o, b, lvl, glow, dt, t) {
   const ORB_MAIN = vizStr(0.5);          // structure + halo: palette middle (accent purple by default)
-  const ORB_HOT = vizHot(0.5, 0.6);      // the burning core: the same colour, heated towards white
+  const ORB_HOT = vizHot(0.5, 0.6);      // the dust: the same colour, heated towards white
   const R = ORB_R * (1 + b * 0.08);
   // spin: set by the song's mood + the sensitivity (see SUN.spinRate in sunFrame)
   const rate = SUN.spinRate ?? (0.35 + b * 1.4);
@@ -987,27 +1017,7 @@ function drawOrb(ctx, o, b, lvl, glow, dt, t) {
   ctx.fillStyle = g;
   ctx.beginPath(); ctx.arc(o, o, R * (2.4 + b * 0.9), 0, Math.PI * 2); ctx.fill();
 
-  // the burning sun inside
-  const cr = R * (0.62 + b * 0.32);
-  g = ctx.createRadialGradient(o, o, 0, o, o, cr);
-  g.addColorStop(0, `rgba(255, 255, 255, ${0.75 + b * 0.25})`);
-  g.addColorStop(0.3, `rgba(${ORB_HOT}, ${0.55 + b * 0.35})`);
-  g.addColorStop(0.7, `rgba(${ORB_MAIN}, ${0.25 + b * 0.25})`);
-  g.addColorStop(1, `rgba(${ORB_MAIN}, 0)`);
-  ctx.fillStyle = g;
-  ctx.beginPath(); ctx.arc(o, o, cr, 0, Math.PI * 2); ctx.fill();
-  // flickering flames licking around the core
-  for (let k = 0; k < 6; k++) {
-    const a = t / (700 + k * 130) + k * 1.9;
-    const d = R * (0.18 + 0.12 * Math.sin(t / 310 + k));
-    const fx = o + Math.cos(a) * d, fy = o + Math.sin(a) * d;
-    const fr = R * (0.28 + 0.12 * Math.sin(t / 190 + k * 2.3) + b * 0.15);
-    const fg = ctx.createRadialGradient(fx, fy, 0, fx, fy, fr);
-    fg.addColorStop(0, `rgba(${ORB_HOT}, ${0.35 * glow + 0.1})`);
-    fg.addColorStop(1, `rgba(${ORB_MAIN}, 0)`);
-    ctx.fillStyle = fg;
-    ctx.beginPath(); ctx.arc(fx, fy, fr, 0, Math.PI * 2); ctx.fill();
-  }
+  // (no white-hot core or music note in the middle: the wire globe stands on its own)
 
   // the wire globe: each piece of line shaded by depth, batched into brightness steps
   const STEPS = 6;
@@ -1050,23 +1060,6 @@ function drawOrb(ctx, o, b, lvl, glow, dt, t) {
   }
 }
 
-// the small music note sitting in the middle of the burning core
-function drawOrbNote(ctx, o, b) {
-  ctx.save();
-  ctx.translate(o, o);
-  const s = 0.36 * (1 + b * 0.06);                       // the 24-unit icon scaled to ~8.6px
-  ctx.scale(s, s);
-  ctx.translate(-12, -12);
-  const ink = `rgba(${vizAt(0.5).map(v => Math.round(v * 0.22)).join(', ')}, 0.88)`;   // a dark shade of the orb colour
-  ctx.fillStyle = ink;
-  ctx.strokeStyle = ink;
-  ctx.lineWidth = 2.6;
-  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  ctx.stroke(new Path2D('M9 18V5l12-2v13'));
-  ctx.beginPath(); ctx.arc(6, 18, 3, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(18, 16, 3, 0, Math.PI * 2); ctx.fill();
-  ctx.restore();
-}
 
 function vizFrame(t) {
   VIZ.raf = requestAnimationFrame(vizFrame);

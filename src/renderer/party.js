@@ -1,6 +1,7 @@
 'use strict';
 /* NotchMine party mode: a full-screen light show that follows the music.
-   - centre (main screen): a big Orb or Sun (follows the "Music icon effect" setting) that throws sparks
+   - centre (one per screen): a big Orb or Sun (follows the "Music icon effect" setting) that throws sparks,
+     drifts around and now and then travels on to the next screen (see orbImages / startOrbPlan in main.js)
    - lighting (each can be switched on/off): club beams, pulsing edge glow, floating particles, blurred album art
    - a faint equalizer blowing up from the bottom of the screen
    Everything is coloured by the "Visualizer colours" palette and driven by the PC's real audio (loopback). */
@@ -65,7 +66,7 @@ const isPlaying = () => media.active && media.status === 'Playing';
 const NB = 72;
 const AU = {
   an: null, ctx: null, data: null, peak: 0.5, lvlPeak: 0.4, bandPeak: 0.6,
-  bass: 0, level: 0.3, prevBass: 0, lastKick: 0, flash: 0,
+  bass: 0, raw: 0, level: 0.3, prevBass: 0, lastKick: 0, flash: 0,
   bands: new Float32Array(NB),
 };
 async function startAudio() {
@@ -80,7 +81,7 @@ async function startAudio() {
     const an = ctx.createAnalyser();
     an.fftSize = 2048; an.smoothingTimeConstant = 0.62; an.minDecibels = -95; an.maxDecibels = -12;
     ctx.createMediaStreamSource(s).connect(an);
-    Object.assign(AU, { an, ctx, data: new Uint8Array(an.frequencyBinCount) });
+    Object.assign(AU, { an, ctx, data: new Uint8Array(an.frequencyBinCount), td: new Uint8Array(an.fftSize) });
   } catch (e) { console.warn('party: no system audio, using a synthetic beat', e && e.message); }
 }
 function listen(t) {
@@ -115,6 +116,7 @@ function listen(t) {
     bass = 0.2 + beat * 0.8; lvl = 0.6;
     for (let i = 0; i < NB; i++) target[i] = clamp(0.3 + Math.sin(t / 380 + i * 0.45) * 0.2 + beat * 0.4 * (1 - i / NB), 0, 1);
   }
+  AU.raw = bass;                                     // unsmoothed: what the orb's vibration follows
   AU.bass += (bass - AU.bass) * (bass > AU.bass ? 0.55 : 0.1);
   AU.level += (lvl - AU.level) * 0.06;
   for (let i = 0; i < NB; i++) AU.bands[i] += (target[i] - AU.bands[i]) * (target[i] > AU.bands[i] ? 0.5 : 0.14);
@@ -137,7 +139,43 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-const centre = () => ({ x: W / 2, y: H * 0.46, R: Math.min(W, H) * 0.165 });
+// ---- the travelling orbs (the centre piece: orb or sun). One per screen. The main process directs them
+// (see startOrbPlan in main.js): small drifts around home every 5–10 s, and every 15–25 s they all glide one
+// screen over. Times in the plan are wall-clock (Date.now()), the same for every screen, so each screen can
+// work out where every orb is and draw the part of it that falls on this screen: an orb crossing over is
+// drawn half here and half on the next screen. The main screen's home sits a bit higher, clear of the text.
+let PLAN = null, ME = 0;
+const ease = k => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
+const mod = (a, n) => ((a % n) + n) % n;
+function driftAt(o, now) {
+  const e = ease(clamp((now - o.t0) / o.dur, 0, 1));
+  return [o.from[0] + (o.to[0] - o.from[0]) * e, o.from[1] + (o.to[1] - o.from[1]) * e];
+}
+function placeOrb(k, d) {                 // screen k + drift d → global position and size
+  const s = PLAN.screens[k];
+  return { x: s.x + s.w * (0.5 + d[0]), y: s.y + s.h * ((s.main ? 0.46 : 0.5) + d[1]), R: Math.min(s.w, s.h) * 0.165 };
+}
+function orbImages(now) {                 // every orb that shows on this screen, in this screen's coordinates
+  if (!PLAN || !PLAN.screens[ME]) return [{ x: W / 2, y: H * (ROLE === 'main' ? 0.46 : 0.5), R: Math.min(W, H) * 0.165, on: true }];
+  const n = PLAN.screens.length, me = PLAN.screens[ME], out = [];
+  for (const o of PLAN.orbs) {
+    const d = driftAt(o, now);
+    let tr = PLAN.travel, s = o.slot, p;
+    if (tr && now >= tr.t0 + tr.dur) { s = mod(s + tr.dir, n); tr = null; }      // arrived (before main says so)
+    if (tr && now >= tr.t0) {
+      // straight across the real desk layout: an orb always leaves through the edge that faces the screen
+      // it's going to (the one going the long way round crosses the screens in between). Orbs heading
+      // right bow upwards and orbs heading left bow downwards, so two swapping orbs pass each other.
+      const k = (now - tr.t0) / tr.dur, e = ease(k), A = placeOrb(s, d), B = placeOrb(mod(s + tr.dir, n), d);
+      const dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy) || 1;
+      const bow = Math.sin(Math.PI * k) * A.R * 0.9;                              // arc, to the left of the heading
+      p = { x: A.x + dx * e + dy / len * bow, y: A.y + dy * e - dx / len * bow, R: A.R + (B.R - A.R) * e };
+    } else p = placeOrb(s, d);
+    const x = p.x - me.x, y = p.y - me.y, m = p.R * 2.6;
+    if (x > -m && x < W + m && y > -m && y < H + m) out.push({ x, y, R: p.R, on: x >= 0 && x < W && y >= 0 && y < H });
+  }
+  return out;
+}
 
 // particles drifting through the room
 const PARTS = Array.from({ length: 260 }, () => ({
@@ -203,51 +241,71 @@ function drawParticles(dt, t) {
   }
 }
 
-function drawEqualizer() {
-  const n = NB, gap = Math.max(2, W / n * 0.22), bw = (W - gap * (n - 1)) / n, maxH = H * 0.3;
-  for (let i = 0; i < n; i++) {
-    const v = AU.bands[i];
-    const h = Math.max(2, v * maxH);
-    const x = i * (bw + gap);
-    const col = pal(i / (n - 1));
-    const g = ctx.createLinearGradient(0, H - h, 0, H);
-    g.addColorStop(0, `rgba(${col}, 0)`);
-    g.addColorStop(1, `rgba(${col}, ${0.16 + v * 0.3})`);
-    ctx.fillStyle = g;
-    ctx.fillRect(x, H - h, bw, h);
+// The equalizer along the bottom uses the same look as the desktop equalizer (Settings → Equalizer →
+// Style, plus its Mirror / Intensity / Height), drawn by eqstyles.js. It gets its own canvas because some
+// styles erase under themselves, then it's laid over the room. A touch softer than on the desktop, so it
+// doesn't fight the lights.
+const EQ = { cv: document.createElement('canvas'), N: 0, vals: new Float32Array(0), peaks: new Float32Array(0), peakV: new Float32Array(0), vis: 0, draw: makeEqStyles(), beat: makeBeatDetector() };
+EQ.ctx = EQ.cv.getContext('2d');
+function drawEqualizer(dt) {
+  const n = clamp(Math.round(W / 21), 40, 160);
+  if (n !== EQ.N) Object.assign(EQ, { N: n, vals: new Float32Array(n), peaks: new Float32Array(n), peakV: new Float32Array(n) });
+  const mirror = settings.deskEqMirror !== false, playing = isPlaying();
+  const kick = EQ.beat(playing ? AU.raw : 0, performance.now());   // its own beat detector (eqstyles.js), tuned for the eq styles
+  for (let i = 0; i < n; i++) {                                // spectrum → columns (bass in the middle when mirrored)
+    const k = mirror ? Math.abs(i - (n - 1) / 2) / ((n - 1) / 2) : i / (n - 1);
+    const v = EQ.vals[i] = AU.bands[Math.round(k * (NB - 1))];
+    if (v >= EQ.peaks[i]) { EQ.peaks[i] = v; EQ.peakV[i] = 0; } else { EQ.peakV[i] += dt * 0.0000025; EQ.peaks[i] = Math.max(v, EQ.peaks[i] - EQ.peakV[i] * dt); }
   }
+  EQ.vis += ((playing ? 1 : 0) - EQ.vis) * (playing ? 0.08 : 0.04);
+  if (EQ.vis < 0.01 && !playing) return;
+  const inten = clamp((settings.deskEqIntensity ?? 60) / 100, 0, 1);
+  const maxH = H * 0.42 * (0.12 + clamp((settings.deskEqHeight ?? 45) / 100, 0, 1) * 0.88);   // same as the desktop one
+  const eh = Math.ceil(Math.min(H, maxH * 1.3 + 12));
+  const pw = Math.round(W * DPR), ph = Math.round(eh * DPR);
+  if (EQ.cv.width !== pw || EQ.cv.height !== ph) { EQ.cv.width = pw; EQ.cv.height = ph; }
+  const c = EQ.ctx;
+  c.setTransform(DPR, 0, 0, DPR, 0, 0);
+  c.globalCompositeOperation = 'source-over';
+  c.clearRect(0, 0, W, eh);
+  const P = { inten, mirror, maxH, a: EQ.vis * 0.75 * (0.15 + inten * 0.85), pt: i => (mirror ? Math.abs(i - (n - 1) / 2) / ((n - 1) / 2) : i / (n - 1)) };
+  EQ.draw({ ctx: c, W, H: eh, N: n, vals: EQ.vals, peaks: EQ.peaks, pal, hot: palHot, playing, AU, synthT: performance.now(), kick, bass: AU.raw }, settings.deskEqStyle, P, dt);
+  ctx.drawImage(EQ.cv, 0, H - eh, W, eh);
 }
 
 // ---- shared: sparks + rings around the centre piece
-function emitSparks(kick, dt, c) {
-  const fire = (count, power) => {
+// Sparks remember where they were thrown from, so an orb on the move leaves a trail behind it.
+function emitSparks(kick, dt, orbs) {
+  const src = orbs.filter(c => c.on);                         // only orbs whose centre is on this screen
+  if (!src.length) return;
+  const fire = (c, count, power) => {
     for (let j = 0; j < count && SPARKS.length < 260; j++) {
       SPARKS.push({
-        a: Math.random() * Math.PI * 2, r: c.R * 0.98,
+        x: c.x, y: c.y, R: c.R, a: Math.random() * Math.PI * 2, r: c.R * 0.98,
         v: (0.18 + Math.random() * 0.38) * (0.7 + power * 0.7) * (c.R / 120),
         len: c.R * (0.12 + Math.random() * 0.3), w: 1.2 + Math.random() * 2.4, life: 1, col: palHot(Math.random(), 0.25),
       });
     }
   };
-  if (kick) {
-    fire(10 + Math.round(AU.bass * 20 * (0.4 + AU.level)), AU.bass);
-    if (AU.bass > 0.55 && RINGS.length < 4) RINGS.push({ r: c.R, life: 1 });
+  if (kick) for (const c of src) {
+    fire(c, 10 + Math.round(AU.bass * 20 * (0.4 + AU.level)), AU.bass);
+    if (AU.bass > 0.55 && RINGS.length < 4 * src.length) RINGS.push({ x: c.x, y: c.y, r: c.R, life: 1 });
   }
   if (isPlaying()) {
-    emitSparks.acc = (emitSparks.acc || 0) + dt * (0.01 + 0.08 * AU.level * (0.4 + AU.bass));
-    while (emitSparks.acc >= 1) { emitSparks.acc -= 1; fire(1, AU.level * 0.7); }
+    emitSparks.acc = (emitSparks.acc || 0) + dt * (0.01 + 0.08 * AU.level * (0.4 + AU.bass)) * src.length;
+    while (emitSparks.acc >= 1) { emitSparks.acc -= 1; fire(src[Math.floor(Math.random() * src.length)], 1, AU.level * 0.7); }
   }
 }
-function drawSparks(dt, c) {
-  const maxR = Math.hypot(W, H) / 2;
+function drawSparks(dt) {
+  const maxR = Math.hypot(W, H);
   ctx.lineCap = 'round';
   for (let j = SPARKS.length - 1; j >= 0; j--) {
     const p = SPARKS[j];
     p.r += p.v * dt; p.life -= dt / 1500;
     if (p.life <= 0 || p.r > maxR) { SPARKS.splice(j, 1); continue; }
-    const x0 = c.x + Math.cos(p.a) * p.r, y0 = c.y + Math.sin(p.a) * p.r;
-    const back = Math.max(c.R * 0.98, p.r - p.len);
-    const x1 = c.x + Math.cos(p.a) * back, y1 = c.y + Math.sin(p.a) * back;
+    const x0 = p.x + Math.cos(p.a) * p.r, y0 = p.y + Math.sin(p.a) * p.r;
+    const back = Math.max(p.R * 0.98, p.r - p.len);
+    const x1 = p.x + Math.cos(p.a) * back, y1 = p.y + Math.sin(p.a) * back;
     const g = ctx.createLinearGradient(x0, y0, x1, y1);
     const pa = p.life * (0.5 + AU.level * 0.5);
     g.addColorStop(0, `rgba(255, 255, 255, ${pa})`);
@@ -258,11 +316,11 @@ function drawSparks(dt, c) {
   }
   for (let j = RINGS.length - 1; j >= 0; j--) {
     const r = RINGS[j];
-    r.r += dt * 0.55 * (c.R / 120); r.life -= dt / 1300;
+    r.r += dt * 0.55 * (Math.min(W, H) * 0.165 / 120); r.life -= dt / 1300;
     if (r.life <= 0) { RINGS.splice(j, 1); continue; }
     ctx.strokeStyle = `rgba(${pal(0.5)}, ${r.life * 0.28})`;
     ctx.lineWidth = 1.5 + r.life * 3;
-    ctx.beginPath(); ctx.arc(c.x, c.y, r.r, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2); ctx.stroke();
   }
 }
 
@@ -274,16 +332,18 @@ const SUN = {
   jitT: Float32Array.from({ length: SUN_N }, () => 0.55 + Math.random() * 0.6),
   ang: Float32Array.from({ length: SUN_N }, (_, i) => (i / SUN_N) * Math.PI * 2 + (Math.random() - 0.5) * 0.05),
 };
-function drawSun(c, kick) {
-  const b = AU.bass, glow = 0.3 + AU.level * 0.7, R = c.R * 0.55 * (1 + b * 0.12);
+function sunTick(kick) {                  // once a frame, however many suns are on screen
   for (let i = 0; i < SUN_N; i++) {
     const k = i < SUN_N / 2 ? i : SUN_N - 1 - i;
     const band = AU.bands[Math.floor(k / (SUN_N / 2) * (NB - 1))];
-    const tgt = band * 0.75 + b * 0.45;
+    const tgt = band * 0.75 + AU.bass * 0.45;
     SUN.len[i] += (tgt - SUN.len[i]) * (tgt > SUN.len[i] ? 0.5 : 0.09);
     if (kick) SUN.jitT[i] = 0.5 + Math.random() * 0.7;
     SUN.jit[i] += (SUN.jitT[i] - SUN.jit[i]) * 0.04;
   }
+}
+function drawSun(c) {
+  const b = AU.bass, glow = 0.3 + AU.level * 0.7, R = c.R * 0.55 * (1 + b * 0.12);
   // bloom
   let g = ctx.createRadialGradient(c.x, c.y, R * 0.3, c.x, c.y, R * (2.6 + b * 1.6));
   g.addColorStop(0, `rgba(${pal(0.5)}, ${(0.4 + b * 0.3) * glow})`);
@@ -346,11 +406,46 @@ const ORB = (() => {
   for (const r of [1.16, 1.24, 1.31, 1.38]) { const tilt = rnd() - 0.5; lines.push({ pts: ring([Math.sin(tilt), Math.cos(tilt), (rnd() - 0.5) * 0.6], 160, 0, r), on: arcs(160, 2, 40, 110), base: 0.7, layer: 2 }); }
   const dust = [];
   for (let i = 0; i < 420; i++) { const d = norm([gauss(), gauss(), gauss()]), r = i < 300 ? 1 + gauss() * 0.025 : i < 360 ? 0.05 + rnd() * 0.55 : 1.08 + rnd() * 0.45; dust.push([d[0] * r, d[1] * r, d[2] * r, rnd() * 6.28, 0.5 + rnd() * 2]); }
-  return { lines, dust, yaw: 0, inner: 0, orbit: 0 };
+  return { lines, dust, yaw: 0, inner: 0, orbit: 0, thump: 0, ph: 0, rate: { yaw: 0, inner: 0, orbit: 0, ph: 0 } };
 })();
-function drawOrb(c, dt, t) {
-  const b = AU.bass, glow = 0.3 + AU.level * 0.7, R = c.R * (1 + b * 0.06);
-  ORB.yaw += dt / 1000 * (0.25 + b * 1.2); ORB.inner -= dt / 1000 * (0.45 + b * 1.4); ORB.orbit += dt / 1000 * (0.18 + b * 0.7);
+// Wall-clock time: the same on every screen, so an orb crossing between two screens looks the same on both
+// halves. The spin (which speeds up with the bass) is kept in step by the main screen (see onOrbSync).
+const wall = () => Date.now() - 1.7e12;
+const hash = n => { let x = Math.imul((n % 1073741824) ^ 0x9e3779b9, 0x85ebca6b); x ^= x >>> 13; x = Math.imul(x, 0xc2b2ae35); x ^= x >>> 16; return (x >>> 0) / 4294967296; };
+// Once a frame: spin + bass vibration. The orb buzzes like a speaker cone on the low end: the whole globe
+// shakes (a fast back-and-forth plus a jolt), pumps in and out, and its wire surface ripples with a
+// standing wave. Kicks add a "thump" that decays; Settings → Sensitivity scales it all.
+function orbTick(dt, kick, T) {
+  const b = AU.bass, R = ORB.rate;
+  R.yaw = 0.25 + b * 1.2; R.inner = -(0.45 + b * 1.4); R.orbit = 0.18 + b * 0.7;
+  ORB.yaw += dt / 1000 * R.yaw; ORB.inner += dt / 1000 * R.inner; ORB.orbit += dt / 1000 * R.orbit;
+  const sens = clamp((settings.fxSensitivity ?? 50) / 100, 0, 1), gain = 0.35 + sens * 1.3;
+  if (kick) ORB.thump = Math.min(1.5, ORB.thump + 0.55 + AU.raw * 0.6);
+  ORB.thump *= Math.pow(0.88, dt / 16.7);
+  const vib = isPlaying() ? clamp((Math.pow(AU.raw, 2.2) * 0.75 + ORB.thump * 0.55) * gain, 0, 1.8) : 0;
+  R.ph = 9 + vib * 22; ORB.ph += dt / 1000 * R.ph;            // ripple speed rises with the bass
+  const fb = Math.floor(T / 16.67), flip = fb % 2 ? 1 : -1;     // alternate every frame: reads as a buzz
+  const va = T * 0.0017, ja = hash(fb) * Math.PI * 2, jr = hash(fb + 7) * 0.55, s = 0.65 + hash(fb + 13) * 0.35;
+  return {
+    vib, pump: 1 + vib * 0.035 * flip, rip: vib * 0.05,
+    ux: (Math.cos(va) * flip * s + Math.cos(ja) * jr) * 0.03 * vib,   // × the orb's radius
+    uy: (Math.sin(va) * flip * s + Math.sin(ja) * jr) * 0.03 * vib,
+  };
+}
+let lastSync = 0;
+function orbSync(T) {                     // main screen → the others, 5× a second
+  if (ROLE !== 'main' || !api.partySync || T - lastSync < 200) return;
+  lastSync = T;
+  api.partySync({ yaw: ORB.yaw, inner: ORB.inner, orbit: ORB.orbit, ph: ORB.ph, at: Date.now() });
+}
+function onOrbSync(s) {
+  const late = Math.max(0, Date.now() - s.at) / 1000;
+  for (const k of ['yaw', 'inner', 'orbit', 'ph']) ORB[k] += (s[k] + ORB.rate[k] * late - ORB[k]) * 0.6;
+}
+function drawOrb(c0, T, V) {
+  const c = { x: c0.x + V.ux * c0.R, y: c0.y + V.uy * c0.R, R: c0.R }, t = T;
+  const ripple = (x, y, z) => 1 + V.rip * (Math.sin(x * 5.3 + ORB.ph) * Math.sin(y * 4.1 - ORB.ph * 1.27) + 0.5 * Math.sin(z * 6.1 + ORB.ph * 0.83));
+  const b = AU.bass, glow = 0.3 + AU.level * 0.7, R = c.R * (1 + b * 0.06) * V.pump;
   const pitch = 0.38 + Math.sin(t / 2600) * 0.1;
   const mats = [ORB.yaw, ORB.inner, ORB.orbit].map(y => { const cy = Math.cos(y), sy = Math.sin(y), cp = Math.cos(pitch), sp = Math.sin(pitch); return [cy, 0, sy, sp * sy, cp, -sp * cy, -cp * sy, sp, cp * cy]; });
   const depth = z => 0.1 + 0.9 * Math.pow(clamp((z + 1) / 2, 0, 1), 1.6);
@@ -359,19 +454,7 @@ function drawOrb(c, dt, t) {
   let g = ctx.createRadialGradient(c.x, c.y, R * 0.5, c.x, c.y, R * (2.2 + b * 0.8));
   g.addColorStop(0, `rgba(${MAIN}, ${0.32 * glow + 0.08})`); g.addColorStop(0.45, `rgba(${MAIN}, ${0.1 * glow})`); g.addColorStop(1, `rgba(${MAIN}, 0)`);
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(c.x, c.y, R * (2.2 + b * 0.8), 0, Math.PI * 2); ctx.fill();
-  // burning core
-  const cr = R * (0.55 + b * 0.3);
-  g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, cr);
-  g.addColorStop(0, `rgba(255, 255, 255, ${0.8 + b * 0.2})`); g.addColorStop(0.3, `rgba(${HOT}, ${0.55 + b * 0.35})`);
-  g.addColorStop(0.7, `rgba(${MAIN}, ${0.25 + b * 0.25})`); g.addColorStop(1, `rgba(${MAIN}, 0)`);
-  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(c.x, c.y, cr, 0, Math.PI * 2); ctx.fill();
-  for (let k = 0; k < 9; k++) {
-    const a = t / (700 + k * 130) + k * 1.9, d = R * (0.15 + 0.12 * Math.sin(t / 310 + k));
-    const fx = c.x + Math.cos(a) * d, fy = c.y + Math.sin(a) * d, fr = R * (0.24 + 0.1 * Math.sin(t / 190 + k * 2.3) + b * 0.14);
-    const fg = ctx.createRadialGradient(fx, fy, 0, fx, fy, fr);
-    fg.addColorStop(0, `rgba(${HOT}, ${0.3 * glow + 0.08})`); fg.addColorStop(1, `rgba(${MAIN}, 0)`);
-    ctx.fillStyle = fg; ctx.beginPath(); ctx.arc(fx, fy, fr, 0, Math.PI * 2); ctx.fill();
-  }
+  // (no white-hot core or music note in the middle: the wire globe stands on its own)
   // the wire globe, depth-shaded, batched into brightness steps
   const STEPS = 10, paths = Array.from({ length: STEPS }, () => new Path2D()), used = new Uint8Array(STEPS);
   for (const ln of ORB.lines) {
@@ -379,12 +462,14 @@ function drawOrb(c, dt, t) {
     const sx = new Float32Array(n), sy = new Float32Array(n), sz = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2];
-      sx[i] = c.x + (m[0] * x + m[1] * y + m[2] * z) * R; sy[i] = c.y + (m[3] * x + m[4] * y + m[5] * z) * R; sz[i] = m[6] * x + m[7] * y + m[8] * z;
+      const rx = m[0] * x + m[1] * y + m[2] * z, ry = m[3] * x + m[4] * y + m[5] * z, rz = m[6] * x + m[7] * y + m[8] * z;
+      const w = V.rip > 0.001 ? R * ripple(rx, ry, rz) : R;
+      sx[i] = c.x + rx * w; sy[i] = c.y + ry * w; sz[i] = rz;
     }
     for (let i = 0; i < n; i++) {
       if (!ln.on[i]) continue;
       const j = (i + 1) % n;
-      const bri = ln.base * depth((sz[i] + sz[j]) / 2) * (0.55 + glow * 0.45 + b * 0.2);
+      const bri = ln.base * depth((sz[i] + sz[j]) / 2) * (0.55 + glow * 0.45 + b * 0.2 + V.vib * 0.12);
       const k = clamp(Math.floor(bri * STEPS), 0, STEPS - 1);
       paths[k].moveTo(sx[i], sy[i]); paths[k].lineTo(sx[j], sy[j]); used[k] = 1;
     }
@@ -399,12 +484,13 @@ function drawOrb(c, dt, t) {
   }
   const m = mats[0];
   for (const [x, y, z, ph, rate] of ORB.dust) {
-    const pz = m[6] * x + m[7] * y + m[8] * z;
+    const px = m[0] * x + m[1] * y + m[2] * z, py = m[3] * x + m[4] * y + m[5] * z, pz = m[6] * x + m[7] * y + m[8] * z;
     const a = depth(pz) * (0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t / 1000 * rate * 3 + ph))) * (0.5 + glow * 0.5);
     ctx.fillStyle = `rgba(${HOT}, ${a})`;
-    const s = Math.max(1, R * 0.008);
-    ctx.fillRect(c.x + (m[0] * x + m[1] * y + m[2] * z) * R - s / 2, c.y + (m[3] * x + m[4] * y + m[5] * z) * R - s / 2, s, s);
+    const s = Math.max(1, R * 0.008), w = V.rip > 0.001 ? R * ripple(px, py, pz) : R;
+    ctx.fillRect(c.x + px * w - s / 2, c.y + py * w - s / 2, s, s);
   }
+  return c;                                                     // the shaken centre, so the note rides along
 }
 function drawNote(c) {
   ctx.save();
@@ -698,13 +784,17 @@ function frame(t) {
     if (L.glow) drawGlow();
     if (L.beams) drawBeams(t);
     if (L.particles) drawParticles(dt, t);
-    drawEqualizer();
-    if (ROLE === 'main') {
-      const c = centre();
-      emitSparks(kick, dt, c);
-      drawSparks(dt, c);
-      if ((settings.artFx || 'sun') === 'sun') drawSun(c, kick); else drawOrb(c, dt, t);
-      drawNote(c);
+    drawEqualizer(dt);
+    const T = wall(), orbs = orbImages(Date.now());             // every orb touching this screen (see orbImages)
+    emitSparks(kick, dt, orbs);
+    drawSparks(dt);
+    if ((settings.artFx || 'sun') === 'sun') {
+      sunTick(kick);
+      for (const c of orbs) { drawSun(c); drawNote(c); }
+    } else {
+      const V = orbTick(dt, kick, T);
+      orbSync(T);
+      for (const c of orbs) drawOrb(c, T, V);
     }
   }
   const art = $('bgArt');
@@ -817,6 +907,9 @@ api.on('accent', a => { accent = a; computeStops(); });
   computeStops();
   applyChips();
   if (init.media) onMedia(init.media);
+  PLAN = init.orbPlan || null; ME = init.orbIndex || 0;
+  api.on('party-plan', p => { PLAN = p; });
+  api.on('party-sync', onOrbSync);
   wake();
   startAudio();
   requestAnimationFrame(frame);

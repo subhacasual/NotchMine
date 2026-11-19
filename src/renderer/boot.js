@@ -13,6 +13,7 @@ window.__notchDebug = {
   S.settings = init.settings;
   if (Number.isFinite(init.anchor)) S.anchor = init.anchor;
   if (init.side) setSide(true);
+  if (init.game) S.game = init.game;
   S.fsDim = !!init.fullscreenDim;
   if (init.state && init.state.conn) S.conn = init.state.conn;
   S.clipboard = init.clipboard || [];
@@ -31,6 +32,7 @@ window.__notchDebug = {
   if (init.state.notifStatus) ALERTS.status = init.state.notifStatus;
   (init.notifs || []).slice().reverse().forEach(n => addNotif(n, true));
   liveInit(init);
+  if (S.game) setGame(S.game);
 
   startClock();
   loadCachedWeather();

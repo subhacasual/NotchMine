@@ -119,6 +119,16 @@ namespace NotchMine {
     [DllImport("user32.dll")] static extern short GetKeyState(int vk);
     public static bool KeyToggled(int vk) { return (GetKeyState(vk) & 1) == 1; }
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool QueryFullProcessImageName(IntPtr h, int flags, System.Text.StringBuilder s, ref int n);
+    // full exe path with the least access rights, so it also works for games protected by anti-cheat
+    public static string ProcPath(int pid) {
+      IntPtr h = OpenProcess(0x1000, false, pid);              // PROCESS_QUERY_LIMITED_INFORMATION
+      if (h == IntPtr.Zero) return "";
+      try { var sb = new System.Text.StringBuilder(1024); int n = sb.Capacity; return QueryFullProcessImageName(h, 0, sb, ref n) ? sb.ToString() : ""; }
+      finally { CloseHandle(h); }
+    }
     [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr h);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
@@ -280,6 +290,117 @@ namespace NotchMine {
 '@
 $audioOk = $true
 try { Add-Type -TypeDefinition $audioSrc -Language CSharp } catch { $audioOk = $false; Log "audio init failed: $_" }
+
+# ---------------------------------------------------------------- GPU load (performance counters)
+$gpuSrc = @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+namespace NotchMine {
+  // GPU load the way Task Manager shows it: per engine (3D, copy, video…) the sum over all
+  // processes, then the busiest engine. Read from Windows' own "GPU Engine" performance counters.
+  public static class Gpu {
+    [DllImport("pdh.dll", CharSet = CharSet.Unicode)] static extern uint PdhOpenQuery(string src, IntPtr user, out IntPtr q);
+    [DllImport("pdh.dll", CharSet = CharSet.Unicode)] static extern uint PdhAddEnglishCounter(IntPtr q, string path, IntPtr user, out IntPtr c);
+    [DllImport("pdh.dll")] static extern uint PdhCollectQueryData(IntPtr q);
+    [DllImport("pdh.dll", CharSet = CharSet.Unicode)] static extern uint PdhGetFormattedCounterArray(IntPtr c, uint fmt, ref uint size, out uint count, IntPtr buf);
+    [StructLayout(LayoutKind.Sequential)] struct Item { public IntPtr name; public uint status; public double value; }
+    const uint PDH_FMT_DOUBLE = 0x200, PDH_FMT_NOCAP100 = 0x8000, PDH_MORE_DATA = 0x800007D2;
+    static IntPtr q, cUtil, cMem;
+    static bool ok;
+    public static bool Init() {
+      if (ok) return true;
+      if (PdhOpenQuery(null, IntPtr.Zero, out q) != 0) return false;
+      if (PdhAddEnglishCounter(q, @"\GPU Engine(*)\Utilization Percentage", IntPtr.Zero, out cUtil) != 0) return false;
+      PdhAddEnglishCounter(q, @"\GPU Adapter Memory(*)\Dedicated Usage", IntPtr.Zero, out cMem);   // optional
+      PdhCollectQueryData(q);                                 // utilization is a rate: needs a first sample
+      ok = true;
+      return true;
+    }
+    static Dictionary<string, double> Read(IntPtr c) {
+      var res = new Dictionary<string, double>();
+      if (c == IntPtr.Zero) return res;
+      uint size = 0, count;
+      uint r = PdhGetFormattedCounterArray(c, PDH_FMT_DOUBLE | PDH_FMT_NOCAP100, ref size, out count, IntPtr.Zero);
+      if (r != PDH_MORE_DATA || size == 0) return res;
+      IntPtr buf = Marshal.AllocHGlobal((int)size);
+      try {
+        if (PdhGetFormattedCounterArray(c, PDH_FMT_DOUBLE | PDH_FMT_NOCAP100, ref size, out count, buf) != 0) return res;
+        int step = Marshal.SizeOf(typeof(Item));
+        for (int i = 0; i < count; i++) {
+          var it = (Item)Marshal.PtrToStructure(new IntPtr(buf.ToInt64() + i * step), typeof(Item));
+          if (it.status != 0 && it.status != 1) continue;            // PDH_CSTATUS_VALID_DATA / NEW_DATA
+          res[Marshal.PtrToStringUni(it.name)] = it.value;
+        }
+      } finally { Marshal.FreeHGlobal(buf); }
+      return res;
+    }
+    // "util,dedicatedBytes" or "" when the counters aren't available
+    static Dictionary<int, double> pidUtil = new Dictionary<int, double>();
+    public static int PidUtil(int pid) { double v; return pidUtil.TryGetValue(pid, out v) ? (int)Math.Round(Math.Min(100, v)) : 0; }
+    public static string Sample() {
+      if (!Init() || PdhCollectQueryData(q) != 0) return "";
+      var engines = new Dictionary<string, double>();
+      var perPid = new Dictionary<int, double>();
+      foreach (var kv in Read(cUtil)) {
+        // pid_1234_luid_0x00000000_0x0000D1B2_phys_0_eng_0_engtype_3D → one engine of one adapter
+        int at = kv.Key.IndexOf("luid_", StringComparison.Ordinal);
+        string key = at >= 0 ? kv.Key.Substring(at) : kv.Key;
+        double v; engines.TryGetValue(key, out v);
+        engines[key] = v + kv.Value;
+        // per process: its busiest engine (used to spot a game nobody has listed yet)
+        int pid;
+        if (kv.Key.StartsWith("pid_", StringComparison.Ordinal) && int.TryParse(kv.Key.Substring(4, Math.Max(0, kv.Key.IndexOf('_', 4) - 4)), out pid)) {
+          double p; perPid.TryGetValue(pid, out p);
+          if (kv.Value > p) perPid[pid] = kv.Value;
+        }
+      }
+      pidUtil = perPid;
+      double max = 0;
+      foreach (var v in engines.Values) if (v > max) max = v;
+      double mem = 0;                                          // the adapter using the most (the graphics card)
+      foreach (var v in Read(cMem).Values) if (v > mem) mem = v;
+      return Math.Round(Math.Min(100, max)) + "," + (long)mem;
+    }
+  }
+}
+'@
+$gpuOk = $true
+try { Add-Type -TypeDefinition $gpuSrc -Language CSharp } catch { $gpuOk = $false; Log "gpu init failed: $_" }
+$script:gpuInfo = $null
+# Windows' own list of games it has seen (Game Bar / Game Mode remember these): full exe paths
+function Send-Games {
+  try {
+    $paths = @()
+    foreach ($k in Get-ChildItem 'HKCU:\System\GameConfigStore\Children' -ErrorAction SilentlyContinue) {
+      try { $v = (Get-ItemProperty $k.PSPath -ErrorAction Stop).MatchedExeFullPath; if ($v) { $paths += "$v" } } catch {}
+    }
+    Send @{ type = 'games'; paths = $paths }
+  } catch {}
+}
+function Poll-Gpu {
+  if (-not $gpuOk) { return }
+  try {
+    if ($null -eq $script:gpuInfo) {
+      # name + memory size of the graphics card (the adapter with the most memory, i.e. the discrete one)
+      $best = $null
+      foreach ($k in Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}' -ErrorAction SilentlyContinue) {
+        try {
+          $p = Get-ItemProperty $k.PSPath -ErrorAction Stop
+          $mem = [int64]0; try { $mem = [int64]$p.'HardwareInformation.qwMemorySize' } catch {}
+          if ($p.DriverDesc -and ($null -eq $best -or $mem -gt $best.mem)) { $best = @{ name = "$($p.DriverDesc)"; mem = $mem } }
+        } catch {}
+      }
+      $script:gpuInfo = if ($best) { $best } else { @{ name = ''; mem = [int64]0 } }
+    }
+    $s = [NotchMine.Gpu]::Sample()
+    if (-not $s) { return }
+    $u, $m = $s.Split(',')
+    $fg = if ($script:fgPid) { [NotchMine.Gpu]::PidUtil($script:fgPid) } else { 0 }
+    Send @{ type = 'gpu'; util = [int]$u; vram = [int64]$m; vramTotal = $script:gpuInfo.mem; name = $script:gpuInfo.name; fgUtil = $fg }
+  } catch {}
+}
 
 # ---------------------------------------------------------------- WinRT (media sessions)
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
@@ -659,6 +780,7 @@ function Poll-Foreground {
         $p = Get-Process -Id $procId -ErrorAction Stop
         $e.exe = "$($p.ProcessName).exe".ToLower()
         try { $e.path = $p.MainModule.FileName } catch {}
+        if (-not $e.path) { try { $e.path = [NotchMine.Win]::ProcPath($procId) } catch {} }   # protected / elevated games
         $e.name = $p.ProcessName
         try { if ($p.Description) { $e.name = $p.Description } } catch {}
       } catch {}
@@ -666,8 +788,9 @@ function Poll-Foreground {
       if ($script:fgProc.Count -gt 200) { $script:fgProc = @{} }
     }
     $e = $script:fgProc[$procId]
+    $script:fgPid = $procId
     $r = $f[2] -split ','
-    Send @{ type = 'foreground'; hwnd = $hwnd; exe = $e.exe; name = $e.name; path = $e.path; cls = $f[1]; l = [int]$r[0]; t = [int]$r[1]; r = [int]$r[2]; b = [int]$r[3]; max = ($f[3] -eq '1') }
+    Send @{ type = 'foreground'; hwnd = $hwnd; pid = $procId; exe = $e.exe; name = $e.name; path = $e.path; cls = $f[1]; l = [int]$r[0]; t = [int]$r[1]; r = [int]$r[2]; b = [int]$r[3]; max = ($f[3] -eq '1') }
   } catch {}
 }
 
@@ -778,6 +901,7 @@ function Handle-Command([string]$line) {
       }
       Send-Mixer
     }
+    'games' { Send-Games }
     'track' {
       $script:trackH = [int64]$parts[1]
       $script:trackLast = -1
@@ -833,6 +957,7 @@ while ($true) {
   if ($tick % 2 -eq 0) { Poll-Foreground }
   if ($tick % 5 -eq 1) { Poll-Privacy; Poll-Devices }
   if ($tick % 10 -eq 3) { Poll-Drives }
+  if ($tick % 5 -eq 3) { Poll-Gpu }
   if ($audioOk -and $tick % 5 -eq 0) {
     try {
       $fsm = [NotchMine.Win]::ForegroundFullscreenMonitor()

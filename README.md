@@ -96,7 +96,7 @@ Right-click the **tray icon** for quick toggles: hide, display, party mode, desk
 ## Features
 
 ### The pill
-- **No music:** a glowing sun or moon (real day/night), time and date, weather, CPU, RAM, Wi-Fi bars (download speed only while something is really downloading), unread notifications and a minimal battery (just ⚡ when plugged in and full). Each item can be switched on or off, and there's a **Minimal** mode that shows details only on hover.
+- **No music:** a glowing sun or moon (real day/night), time and date, weather, CPU, RAM, GPU, Wi-Fi bars (download speed only while something is really downloading), unread notifications and a minimal battery (just ⚡ when plugged in and full). Each item can be switched on or off, and there's a **Minimal** mode that shows details only on hover.
 - **While music plays:** album art (or the sun/orb effect), the time, the title or the current **lyric line**, and a live equalizer.
 - **Focus timer:** a countdown ring while a Pomodoro is running.
 
@@ -121,7 +121,7 @@ Right-click the **tray icon** for quick toggles: hide, display, party mode, desk
 - **Quick notes** that save automatically.
 
 ### System
-- **CPU and RAM** graphs, plus **network** download/upload speed with session totals.
+- **CPU, RAM and GPU** graphs (GPU load the way Task Manager measures it, plus graphics memory), plus **network** download/upload speed with session totals.
 - **Volume:** master volume plus a **per-app mixer**.
 - **Brightness** (laptop screens), **mic mute**, and **battery** status.
 

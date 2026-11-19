@@ -1,7 +1,8 @@
 'use strict';
-/* NotchMine desktop equalizer: see-through, click-through bars along the bottom of the screen.
-   They jump with whatever the PC is playing, fade away when the music stops, and use the
-   "Visualizer colours" palette. Intensity = brightness/glow, Height = how high they can jump. */
+/* NotchMine desktop equalizer: see-through, click-through visualizer along the bottom of the screen.
+   It jumps with whatever the PC is playing, fades away when the music stops, and uses the
+   "Visualizer colours" palette. Style = one of the 15 looks in eqstyles.js (Settings → Desktop equalizer; party mode uses it too),
+   Intensity = brightness/glow, Height = how high it can reach. */
 
 const api = window.notch;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -32,7 +33,10 @@ const pal = t => palAt(t).join(', ');
 const hot = (t, w) => palAt(t).map(v => Math.round(v + (255 - v) * w)).join(', ');
 
 // ---- audio (system loopback, analysed locally, never recorded)
-const AU = { an: null, ctx: null, data: null, peak: 0.6 };
+const AU = { an: null, ctx: null, data: null, peak: 0.6, bassPeak: 0.5 };
+// the raw bass (40–170 Hz) for beat detection (makeBeatDetector in eqstyles.js)
+const BEAT = { bass: 0 };
+const beatOf = makeBeatDetector();         // eqstyles.js
 async function startAudio() {
   try {
     const s = await navigator.mediaDevices.getUserMedia({
@@ -44,7 +48,7 @@ async function startAudio() {
     const an = ctx.createAnalyser();
     an.fftSize = 4096; an.smoothingTimeConstant = 0.55; an.minDecibels = -95; an.maxDecibels = -12;
     ctx.createMediaStreamSource(s).connect(an);
-    Object.assign(AU, { an, ctx, data: new Uint8Array(an.frequencyBinCount) });
+    Object.assign(AU, { an, ctx, data: new Uint8Array(an.frequencyBinCount), td: new Uint8Array(an.fftSize) });
   } catch (e) { console.warn('desktop eq: no system audio', e && e.message); }
 }
 
@@ -86,6 +90,11 @@ function frame(t) {
   if (AU.an && playing) {
     const d = AU.data, hz = AU.ctx.sampleRate / AU.an.fftSize;
     AU.an.getByteFrequencyData(d);
+    let bs = 0, bn = 0;
+    for (let b = Math.max(1, Math.floor(40 / hz)); b <= Math.ceil(170 / hz); b++) { bs += d[b]; bn++; }
+    const raw = bn ? bs / bn / 255 : 0;
+    AU.bassPeak = Math.max(raw, Math.max(0.45, AU.bassPeak * 0.996));
+    BEAT.bass = clamp((raw - 0.3) / (AU.bassPeak - 0.3), 0, 1);
     let mx = 0;
     for (let i = 0; i < half; i++) {
       const f0 = 32 * Math.pow(16000 / 32, i / half), f1 = 32 * Math.pow(16000 / 32, (i + 1) / half);
@@ -98,7 +107,8 @@ function frame(t) {
     for (let i = 0; i < half; i++) target[i] = clamp((target[i] - 0.3) / (AU.peak - 0.3), 0, 1);
   } else if (playing) {
     synthT += dt;
-    const beat = Math.pow(Math.max(0, Math.sin(synthT * Math.PI / 500)), 6);
+    const beat = Math.exp(-(synthT % 500) / 110);                     // a kick drum: instant hit, quick decay
+    BEAT.bass = 0.2 + beat * 0.8;
     for (let i = 0; i < half; i++) target[i] = clamp(0.25 + Math.sin(synthT / 300 + i * 0.5) * 0.18 + beat * 0.5 * (1 - i / half), 0, 1);
   }
   for (let i = 0; i < N; i++) {
@@ -109,39 +119,19 @@ function frame(t) {
   }
 
   const inten = clamp((settings.deskEqIntensity ?? 60) / 100, 0, 1);
-  const maxH = H * (0.12 + clamp((settings.deskEqHeight ?? 45) / 100, 0, 1) * 0.88);
-  const slot = W / N, bw = Math.max(2, slot * 0.68), r = Math.min(bw / 2, 4);
-  const a = vis * (0.15 + inten * 0.85);
+  const P = {
+    inten, mirror, a: vis * (0.15 + inten * 0.85),
+    maxH: H * (0.12 + clamp((settings.deskEqHeight ?? 45) / 100, 0, 1) * 0.88),
+    pt: i => (mirror ? Math.abs(i - (N - 1) / 2) / ((N - 1) / 2) : i / (N - 1)),   // palette position of column i
+  };
+  if (!playing) BEAT.bass = 0;
+  const kick = beatOf(BEAT.bass, t);
   ctx.globalCompositeOperation = 'lighter';
-  for (let i = 0; i < N; i++) {
-    const v = vals[i];
-    const h = Math.max(2, v * maxH);
-    const x = i * slot + (slot - bw) / 2, y = H - h;
-    const pt = mirror ? Math.abs(i - (N - 1) / 2) / ((N - 1) / 2) : i / (N - 1);
-    const col = pal(pt);
-    // soft glow behind the bar
-    if (inten > 0.05) {
-      const gg = ctx.createLinearGradient(0, y, 0, H);
-      gg.addColorStop(0, `rgba(${col}, 0)`);
-      gg.addColorStop(1, `rgba(${col}, ${a * 0.22 * inten})`);
-      ctx.fillStyle = gg;
-      ctx.fillRect(x - bw * 0.6, y - 6, bw * 2.2, h + 6);
-    }
-    // the bar: strongest at the bottom, see-through towards the top
-    const g = ctx.createLinearGradient(0, y, 0, H);
-    g.addColorStop(0, `rgba(${hot(pt, 0.3)}, ${a * (0.35 + v * 0.5)})`);
-    g.addColorStop(0.5, `rgba(${col}, ${a * 0.45})`);
-    g.addColorStop(1, `rgba(${col}, ${a * 0.85})`);
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.roundRect(x, y, bw, h + r, [r, r, 0, 0]);
-    ctx.fill();
-    // falling peak cap
-    const py = H - Math.max(2, peaks[i] * maxH) - 5;
-    ctx.fillStyle = `rgba(${hot(pt, 0.5)}, ${a * 0.9})`;
-    ctx.fillRect(x, py, bw, 2.5);
-  }
+  drawEq({ ctx, W, H, N, vals, peaks, pal, hot, playing, AU, synthT, kick, bass: BEAT.bass }, settings.deskEqStyle, P, dt);
 }
+
+// the look (Settings → Desktop equalizer → Style) is drawn by eqstyles.js, shared with party mode
+const drawEq = makeEqStyles();
 
 api.on('media', m => {
   if (m.active && m.thumb === undefined && media.thumbId === m.thumbId) m.thumb = media.thumb;

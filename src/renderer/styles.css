@@ -222,15 +222,22 @@ i[data-icon] svg { width: 100%; height: 100%; }
 .cs-ic svg { width: 14px; height: 14px; }
 .cs.cpu .cs-ic { color: rgb(var(--viz-c2, var(--accent))); }
 .cs.ram .cs-ic { color: rgb(var(--viz-c4, var(--accent))); }
+.cs.gpu .cs-ic { color: rgb(var(--viz-c3, var(--accent))); }
 .cs.net .cs-ic { color: rgb(var(--viz-c5, var(--accent))); }
 .cs.wx .cs-ic { width: 16px; height: 16px; }
 .cs.wx .cs-ic svg { width: 16px; height: 16px; filter: drop-shadow(0 0 3px rgba(255,255,255,.18)); }
 .cs.hot b { color: var(--orange); }
 .cs b small { font-size: 10px; font-weight: 600; margin-left: 2px; opacity: .75; }
 .cs.hot .cs-ic { color: var(--orange); animation: dotPulse 1.2s ease-in-out infinite; }
+/* 90% and up (CPU, RAM, GPU): red and blinking faster */
+.cs.crit b { color: var(--red); }
+.cs.crit .cs-ic { color: var(--red); animation: critPulse .5s ease-in-out infinite; }
+@keyframes critPulse { 50% { opacity: .3; } }
+.stat-head b.hot { color: var(--orange); }
+.stat-head b.crit { color: var(--red); animation: critPulse .5s ease-in-out infinite; }
 /* thin dividers between groups: weather | cpu ram | net | battery */
 .c-stats > * + *::before { content: ""; width: 1px; height: 12px; background: rgba(255,255,255,.12); margin-right: 7px; margin-left: -4px; }
-.c-stats > .cs.ram::before { display: none; }
+.c-stats > .cs.ram::before, .c-stats > .cs.gpu::before { display: none; }
 .c-stats > .bat::before { content: none; }
 .c-stats > .bat { margin-left: 2px; }
 .c-stats .c-batt { gap: 5px; }
@@ -561,7 +568,10 @@ i[data-icon] svg { width: 100%; height: 100%; }
 ::-webkit-scrollbar-track { background: transparent; }
 
 /* ---------------- system */
-.sys-col { display: grid; grid-template-rows: 1fr 1fr; gap: 10px; min-height: 0; }
+.sys-col { display: grid; grid-auto-rows: 1fr; gap: 10px; min-height: 0; }
+.sys-col:has(#gpuCard:not([hidden])) { gap: 6px; }
+.sys-col:has(#gpuCard:not([hidden])) .stat-card { padding: 7px 12px; }
+.sys-col:has(#gpuCard:not([hidden])) .stat-head b { font-size: 15px; }
 .stat-card { padding: 11px 13px; display: flex; flex-direction: column; }
 .stat-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 600; }
 .stat-head span { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
@@ -572,6 +582,9 @@ i[data-icon] svg { width: 100%; height: 100%; }
 .spark.ram .area { fill: rgba(48, 209, 88, .16); }
 .spark polyline { fill: none; stroke: rgb(var(--accent)); stroke-width: 1.6; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 .spark.ram polyline { stroke: var(--green); }
+.spark.gpu .area { fill: rgba(64, 200, 224, .16); }
+.spark.gpu polyline { stroke: #40c8e0; }
+#gpuCard[hidden] { display: none; }
 .stat-sub { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .controls-card { display: flex; flex-direction: column; justify-content: space-between; gap: 8px; padding: 14px 16px; }
@@ -646,6 +659,18 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 0; he
 .seg button { height: 22px; min-width: 34px; padding: 0 10px; border-radius: 11px; font-size: 11.5px; font-weight: 600; color: var(--muted); transition: background .2s, color .2s; }
 .seg button:hover { color: var(--text); }
 .seg button.active { background: rgba(255,255,255,.9); color: #000; }
+/* dropdown (Settings): a button showing the choice + a scrolling list that opens under (or above) it */
+.dd { position: relative; }
+.dd-btn { display: inline-flex; align-items: center; gap: 8px; height: 24px; min-width: 116px; padding: 0 10px 0 12px; border-radius: 12px; background: rgba(255,255,255,.07); font-size: 11.5px; font-weight: 600; color: var(--text); justify-content: space-between; transition: background .2s; }
+.dd-btn:hover, .dd.open .dd-btn { background: rgba(255,255,255,.13); }
+.dd-btn::after { content: ''; width: 6px; height: 6px; margin-top: -3px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); opacity: .7; transition: transform .2s, margin .2s; }
+.dd.open .dd-btn::after { transform: rotate(-135deg); margin-top: 3px; }
+.dd-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; display: flex; flex-direction: column; gap: 1px; min-width: 100%; max-height: 220px; overflow-y: auto; padding: 4px; border-radius: 12px; background: rgba(30,30,34,.97); box-shadow: inset 0 0 0 1px rgba(255,255,255,.1), 0 12px 32px rgba(0,0,0,.55); opacity: 0; visibility: hidden; transform: translateY(-4px); transition: opacity .15s, transform .15s, visibility 0s linear .15s; scrollbar-width: thin; }
+.dd.up .dd-list { top: auto; bottom: calc(100% + 4px); transform: translateY(4px); }
+.dd.open .dd-list { opacity: 1; visibility: visible; transform: none; transition: opacity .15s, transform .15s; }
+.dd-list button { text-align: left; height: 24px; padding: 0 10px; border-radius: 8px; font-size: 11.5px; font-weight: 600; color: var(--muted); white-space: nowrap; flex: none; }
+.dd-list button:hover { background: rgba(255,255,255,.08); color: var(--text); }
+.dd-list button.active { background: rgba(var(--accent), .3); color: var(--text); }
 .themes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
 .themes button { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 6px 2px 5px; border-radius: 12px; font-size: 10.5px; color: var(--muted); font-weight: 600; box-shadow: inset 0 0 0 1px var(--line); transition: box-shadow .2s, color .2s; }
 .themes button.active { color: var(--text); box-shadow: inset 0 0 0 2px rgb(var(--accent)); }
@@ -1088,13 +1113,20 @@ body.viz-live .eq.live.playing i { animation: none; transition: height 0.07s lin
 /* system: live numbers, volume and brightness */
 .ov-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 8px; }
 .ov-st { min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 10px; background: rgba(255,255,255,.04); }
+/* five tiles (CPU, memory, GPU, download, battery): a little tighter so speeds like "825 B/s" fit */
+.ov-stats:has(> :nth-child(5)) { gap: 5px; }
+.ov-stats:has(> :nth-child(5)) .ov-st { padding: 6px 6px; }
+.ov-stats:has(> :nth-child(5)) .ov-st b { font-size: 12px; }
 .ov-st span { font-size: 10px; font-weight: 600; color: var(--muted); white-space: nowrap; }
 .ov-st b { font-size: 13.5px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ov-meter { display: block; height: 3px; margin-top: 2px; border-radius: 2px; background: rgba(255,255,255,.1); overflow: hidden; }
 .ov-meter s { display: block; height: 100%; border-radius: 2px; background: rgb(var(--accent)); transition: width .5s var(--smooth); }
 .ov-st.ram .ov-meter s, .ov-st.chg .ov-meter s { background: var(--green); }
+.ov-st.gpu .ov-meter s { background: #40c8e0; }
 .ov-st.hot b { color: var(--orange); }
 .ov-st.hot .ov-meter s { background: var(--orange); }
+.ov-st.crit b { color: var(--red); animation: critPulse .5s ease-in-out infinite; }
+.ov-st.crit .ov-meter s { background: var(--red); }
 .ov-sliders { display: flex; gap: 12px; }
 .ov-sl { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; }
 .ov-sl.off { display: none; }
@@ -1133,3 +1165,60 @@ body.viz-live .eq.live.playing i { animation: none; transition: height 0.07s lin
 .ov-clip-item { width: 100%; padding: 5px 9px; border-radius: 9px; background: rgba(255,255,255,.04); text-align: left; font-size: 11.5px; color: rgba(255,255,255,.85); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: background .2s, color .2s; }
 .ov-clip-item:hover { background: rgba(255,255,255,.1); }
 .ov-clip-item.done { color: var(--green); }
+
+/* ================================================================ game mode */
+.tab-btn[hidden] { display: none; }
+/* pill: game icon + time played, then CPU · RAM · GPU · graphics memory · battery */
+.c-game { width: 18px; height: 18px; display: inline-grid; place-items: center; flex: none; color: rgb(var(--accent)); }
+.c-game img { width: 18px; height: 18px; border-radius: 4px; object-fit: contain; }
+.c-game svg { width: 17px; height: 17px; }
+.c-gtime { font-size: 12.5px; }
+.cs.vram .cs-ic { color: #40c8e0; }
+.cs.gpu .cs-ic { color: #40c8e0; }
+.c-stats > .cs.vram::before { display: none; }
+.bat.gwarn { box-shadow: inset 0 0 0 1.4px rgba(255, 159, 10, .95); }
+.bat.gwarn .bat-fill { background: var(--orange); }
+.bat.gwarn.low { box-shadow: inset 0 0 0 1.4px rgba(255, 69, 58, .9); }
+.bat.gwarn.low .bat-fill { background: var(--red); }
+.pk-icon.gm-pk { color: rgb(var(--accent)); }
+.pk-icon.gm-pk img { width: 22px; height: 22px; border-radius: 5px; object-fit: contain; }
+
+/* Game page */
+.page[data-page="game"] { grid-template-columns: 250px 1fr; }
+.gm-card { position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 8px; padding: 13px 14px; min-width: 0; }
+.gm-card > * { position: relative; }
+/* the game's wide Steam artwork, faded behind the card */
+.gm-card > .gm-hero { position: absolute; inset: 0; background: center / cover no-repeat; opacity: 0; transition: opacity .6s;
+  -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,.9), rgba(0,0,0,.25) 75%); mask-image: linear-gradient(180deg, rgba(0,0,0,.9), rgba(0,0,0,.25) 75%); }
+.gm-card.has-art > .gm-hero { opacity: .38; }
+.gm-ic.poster { width: 62px; height: 93px; border-radius: 7px; background: none; box-shadow: 0 6px 18px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.1); }
+.gm-ic.poster img { width: 100%; height: 100%; object-fit: cover; }
+.gm-card.has-art .gm-name, .gm-card.has-art .gm-time { text-shadow: 0 1px 6px rgba(0,0,0,.6); }
+/* pill + pop-up: a small portrait poster */
+.c-game.has-poster { width: 15px; height: 22px; }
+.c-game.has-poster img { width: 15px; height: 22px; border-radius: 3px; object-fit: cover; box-shadow: 0 0 0 1px rgba(255,255,255,.15); }
+.pk-poster { width: 30px; height: 45px; border-radius: 5px; object-fit: cover; flex: none; box-shadow: 0 0 0 1px rgba(255,255,255,.12); }
+.gm-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.gm-ic { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; flex: none; background: rgba(var(--accent), .16); color: rgb(var(--accent)); overflow: hidden; }
+.gm-ic img { width: 28px; height: 28px; object-fit: contain; }
+.gm-ic svg { width: 22px; height: 22px; }
+.gm-title { min-width: 0; }
+.gm-name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gm-time { font-size: 28px; font-weight: 700; letter-spacing: -.5px; font-variant-numeric: tabular-nums; line-height: 1.1; margin-top: 2px; }
+.gm-meta { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
+.gm-meta span { display: inline-flex; align-items: center; gap: 5px; }
+.gm-meta svg { width: 12px; height: 12px; flex: none; }
+.gm-meta .gm-ok { color: var(--green); }
+.gm-meta .gm-warn { color: var(--orange); }
+.gm-foot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.gm-foot .pill-btn { height: 26px; padding: 0 10px; font-size: 11px; }
+.gm-foot kbd { font: inherit; font-size: 10px; padding: 0 3px; border-radius: 3px; background: rgba(255,255,255,.1); }
+.gm-stats { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; gap: 8px; min-height: 0; }
+.gm-stats .stat-card { padding: 8px 12px; min-height: 0; }
+.gm-stats .stat-card[hidden] { display: none; }
+.gm-stats .stat-head b { font-size: 15px; }
+.gm-stats b.hot { color: var(--orange); }
+.gm-stats b.crit { color: var(--red); animation: critPulse .5s ease-in-out infinite; }
+.set-note kbd { font: inherit; font-size: 10.5px; padding: 0 3px; border-radius: 3px; background: rgba(255,255,255,.1); }
+:root[data-layout="stacked"] .gm-stats .stat-card { height: 78px; }
+:root[data-game="1"] .hdr-stats { display: none; }   /* the Game page shows these; the header needs the room for the Game tab */

@@ -30,6 +30,7 @@
         <header class="hdr">
           <button class="icon-btn" id="stackBack" title="Back to all sections"><i data-icon="chevL"></i></button>
           <nav class="tabs" id="tabs">
+            <button class="tab-btn" data-tab="game" id="gameTab" title="Game" hidden><i data-icon="gamepad"></i><span>Game</span></button>
             <button class="tab-btn" data-tab="home" title="Home"><i data-icon="home"></i><span>Home</span></button>
             <button class="tab-btn" data-tab="apps" title="Apps"><i data-icon="grid"></i><span>Apps</span></button>
             <button class="tab-btn" data-tab="shelf" title="Shelf"><i data-icon="tray"></i><span>Shelf</span><b class="badge" id="shelfBadge"></b></button>
@@ -226,6 +227,47 @@
             </div>
           </section>
 
+          <!-- GAME (only while a game is in front) -->
+          <section class="page" data-page="game">
+            <div class="card gm-card" id="gmCard">
+              <div class="gm-hero" id="gmHero"></div>
+              <div class="gm-head">
+                <span class="gm-ic" id="gmIcon"></span>
+                <div class="gm-title">
+                  <div class="gm-name" id="gmName"></div>
+                  <div class="stat-sub">Playing for</div>
+                  <div class="gm-time" id="gmTime">0:00</div>
+                </div>
+              </div>
+              <div class="gm-meta" id="gmMeta"></div>
+              <div class="gm-foot">
+                <span class="muted small" title="Opens and closes this panel from inside a game"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>G</kbd></span>
+                <button class="pill-btn small" id="gmNotGame" title="Stop game mode for this app and never treat it as a game">Not a game</button>
+              </div>
+            </div>
+            <div class="gm-stats">
+              <div class="card stat-card" id="gmGpuCard">
+                <div class="stat-head"><span><i data-icon="gpu"></i>GPU</span><b id="gmGpu">--%</b></div>
+                <svg class="spark gpu" id="gmGpuSpark" viewBox="0 0 100 30" preserveAspectRatio="none"></svg>
+                <div class="stat-sub" id="gmGpuSub"></div>
+              </div>
+              <div class="card stat-card" id="gmVramCard">
+                <div class="stat-head"><span><i data-icon="vram"></i>Graphics memory</span><b id="gmVram">--</b></div>
+                <svg class="spark gpu" id="gmVramSpark" viewBox="0 0 100 30" preserveAspectRatio="none"></svg>
+                <div class="stat-sub" id="gmVramSub"></div>
+              </div>
+              <div class="card stat-card">
+                <div class="stat-head"><span><i data-icon="cpu"></i>CPU</span><b id="gmCpu">--%</b></div>
+                <svg class="spark" id="gmCpuSpark" viewBox="0 0 100 30" preserveAspectRatio="none"></svg>
+              </div>
+              <div class="card stat-card">
+                <div class="stat-head"><span><i data-icon="memory"></i>Memory</span><b id="gmRam">--%</b></div>
+                <svg class="spark ram" id="gmRamSpark" viewBox="0 0 100 30" preserveAspectRatio="none"></svg>
+                <div class="stat-sub" id="gmRamSub"></div>
+              </div>
+            </div>
+          </section>
+
           <!-- SYSTEM -->
           <section class="page" data-page="system">
             <div class="sys-col">
@@ -238,6 +280,11 @@
                 <div class="stat-head"><span><i data-icon="memory"></i>Memory</span><b id="ramVal">--%</b></div>
                 <svg class="spark ram" id="ramSpark" viewBox="0 0 100 30" preserveAspectRatio="none"></svg>
                 <div class="stat-sub" id="ramSub"></div>
+              </div>
+              <div class="card stat-card" id="gpuCard" hidden>
+                <div class="stat-head"><span><i data-icon="gpu"></i>GPU</span><b id="gpuVal">--%</b></div>
+                <svg class="spark gpu" id="gpuSpark" viewBox="0 0 100 30" preserveAspectRatio="none"></svg>
+                <div class="stat-sub" id="gpuSub"></div>
               </div>
             </div>
 
@@ -386,6 +433,7 @@
                 <button data-sec="party"><i data-icon="music"></i><span>Party</span></button>
                 <button data-sec="deskeq"><i data-icon="mixer"></i><span>Equalizer</span></button>
                 <button data-sec="side"><i data-icon="sideways"></i><span>Side mode</span></button>
+                <button data-sec="game"><i data-icon="gamepad"></i><span>Game mode</span></button>
               </nav>
 
               <div class="set-body">
@@ -514,7 +562,7 @@
                     <label class="set-row" title="Notifications are read from Windows Action Center on this PC only. Nothing leaves your computer."><span>Hide message text in pop-ups</span><input type="checkbox" class="switch" data-setting="notifHideText"></label>
                     <div class="set-label" title="Shown in the pill when no music is playing">Idle pill shows</div>
                     <div class="stat-pick wrap" id="idlePick">
-                      <button data-stat="date">Date</button><button data-stat="weather">Weather</button><button data-stat="cpu">CPU</button><button data-stat="ram">RAM</button><button data-stat="net">Network</button><button data-stat="battery">Battery</button><button data-stat="alerts">Alerts</button>
+                      <button data-stat="date">Date</button><button data-stat="weather">Weather</button><button data-stat="cpu">CPU</button><button data-stat="ram">RAM</button><button data-stat="gpu">GPU</button><button data-stat="net">Network</button><button data-stat="battery">Battery</button><button data-stat="alerts">Alerts</button>
                     </div>
                     <label class="set-row" title="Only sun/moon, time, date and weather (plus unread alerts and battery when unplugged). The rest shows in the opened panel (or on hover when Open is set to Click)."><span>Minimal (details on hover)</span><input type="checkbox" class="switch" data-setting="idleMinimal"></label>
                   </div>
@@ -543,10 +591,51 @@
                   </div>
                 </div>
 
+                <!-- Game mode -->
+                <div class="set-sec" data-sec="game">
+                  <div class="set-col">
+                    <label class="set-row"><span>Game mode</span><input type="checkbox" class="switch" data-setting="gameMode"></label>
+                    <div class="set-note">While a game is in front, the notch moves to the top-right corner and shows your game stats. Click it or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>G</kbd> to open it.</div>
+                    <label class="set-row" title="Uses Windows' own list of games, game library folders (Steam, Epic, Xbox, EA, Riot…) and asks about unknown full-screen apps that keep the graphics card busy"><span>Find games by themselves</span><input type="checkbox" class="switch" data-setting="gameAuto"></label>
+                    <label class="set-row" title="Notifications still arrive in Alerts; you get a count when you stop playing"><span>Hold pop-ups while playing</span><input type="checkbox" class="switch" data-setting="gameQuiet"></label>
+                    <label class="set-row" title="Posters come from Steam's own files on this PC. When those have none, look the game up on the Steam store: only the game's name is sent."><span>Find game posters online</span><input type="checkbox" class="switch" data-setting="gameArtOnline"></label>
+                  </div>
+                  <div class="set-col">
+                    <div class="set-label">Always a game</div>
+                    <div class="side-list" id="gameList"></div>
+                    <div class="set-label small">Never a game</div>
+                    <div class="side-list" id="notGameList"></div>
+                    <div class="set-label small">Recently used: click to add as a game</div>
+                    <div class="side-list recent" id="gameRecent"></div>
+                  </div>
+                </div>
+
                 <!-- Desktop equalizer -->
                 <div class="set-sec" data-sec="deskeq">
                   <div class="set-col">
                     <label class="set-row"><span>Desktop equalizer</span><input type="checkbox" class="switch" data-setting="deskEq"></label>
+                    <div class="set-row"><span>Style</span>
+                      <div class="dd" data-dd="deskEqStyle">
+                        <button class="dd-btn" type="button"><span class="dd-val">Bars</span></button>
+                        <div class="dd-list" role="listbox">
+                          <button data-v="bars" title="Classic bars with falling peak caps">Bars</button>
+                          <button data-v="line" title="A glowing line tracing the spectrum">Line</button>
+                          <button data-v="wave" title="The live sound wave, like an oscilloscope">Wave</button>
+                          <button data-v="dots" title="Retro LED dot columns">Dots</button>
+                          <button data-v="hills" title="Soft layered hills that rise with the music">Hills</button>
+                          <button data-v="reflect" title="Bars growing up and down from a centre line, mirrored like on water">Reflect</button>
+                          <button data-v="blocks" title="Segmented VU-meter blocks, hotter towards the top">Blocks</button>
+                          <button data-v="neon" title="Hollow glowing neon-tube bars">Neon</button>
+                          <button data-v="ridges" title="Stacked ridge lines: the last moments of music rolling back into the distance">Ridges</button>
+                          <button data-v="fountain" title="Sparks shooting up as high as each band, falling back down">Fountain</button>
+                          <button data-v="bubbles" title="Bubbles rising from the bottom, bigger on louder bands">Bubbles</button>
+                          <button data-v="city" title="A night skyline: buildings rise with the music, windows light up">City</button>
+                          <button data-v="aurora" title="Soft shimmering curtains of light">Aurora</button>
+                          <button data-v="heartbeat" title="A heart-monitor line that spikes on every beat">Heartbeat</button>
+                          <button data-v="lasers" title="Thin laser rays fanning up from the bottom">Lasers</button>
+                        </div>
+                      </div>
+                    </div>
                     <div class="set-row"><span>Position</span>
                       <span class="seg" data-seg="deskEqPos" data-type="str">
                         <button data-v="above" title="Sits on top of the taskbar">Above taskbar</button><button data-v="bottom" title="Starts at the very bottom, over the taskbar">Screen bottom</button>
@@ -627,6 +716,7 @@
   <script src="extras.js"></script>
   <script src="live.js"></script>
   <script src="stack.js"></script>
+  <script src="game.js"></script>
   <script src="boot.js"></script>
 </body>
 </html>

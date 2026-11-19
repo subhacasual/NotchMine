@@ -6,7 +6,8 @@ const CHANNELS = [
   'hover', 'blur', 'media', 'volume', 'brightness', 'sys', 'clipboard', 'settings',
   'open-tab', 'pulse', 'net', 'notif', 'notif-status',
   'mixer', 'privacy', 'mic', 'audio-device', 'lockkey', 'drive', 'capture', 'download', 'phone-file', 'phone-status',
-  'party', 'accent', 'anchor', 'drag-state', 'side', 'conn', 'fullscreen',
+  'party', 'party-plan', 'party-sync', 'accent', 'anchor', 'drag-state', 'side', 'conn', 'fullscreen',
+  'game', 'game-ask', 'game-summary', 'panel-toggle',
 ];
 
 contextBridge.exposeInMainWorld('notch', {
@@ -22,6 +23,7 @@ contextBridge.exposeInMainWorld('notch', {
   displays: () => ipcRenderer.invoke('displays'),
   sideApps: () => ipcRenderer.invoke('side-apps'),
   appIcon: p => ipcRenderer.invoke('app-icon', p),
+  gameAnswer: a => ipcRenderer.send('game-answer', a),
 
   media: (cmd, arg) => ipcRenderer.send('media', cmd, arg),
   setVolume: v => ipcRenderer.send('volume', v),
@@ -56,6 +58,7 @@ contextBridge.exposeInMainWorld('notch', {
   partyStart: () => ipcRenderer.send('party-start'),
   partyStop: () => ipcRenderer.send('party-stop'),
   partyInit: () => ipcRenderer.invoke('party-init'),
+  partySync: s => ipcRenderer.send('party-sync', s),
   reportAccent: rgb => ipcRenderer.send('accent-changed', rgb),
   phoneStart: () => ipcRenderer.invoke('phone-start'),
   phoneStop: () => ipcRenderer.invoke('phone-stop'),

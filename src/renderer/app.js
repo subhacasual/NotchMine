@@ -18,6 +18,7 @@ const S = {
   hover: false,
   dragActive: false,
   settings: {},
+  game: null,          // game mode: { exe, name, path, start, icon } while a game is in front
   media: { active: false },
   mediaKey: undefined,
   volume: null,
@@ -75,7 +76,8 @@ function compactWidth() {
   return Math.max((t ? 236 : 214) + extra, t ? 0 : (S.idleW || 0));
 }
 // which live stats the idle pill shows (Settings → Widgets)
-function idleCfg() { return { date: true, weather: true, cpu: true, ram: true, net: true, battery: true, alerts: true, ...(S.settings.idleStats || {}) }; }
+const STAT_CHIP = { cpu: ['Processor use', 'chip'], ram: ['Memory use', 'ram'], gpu: ['Graphics card use', 'gpu'], vram: ['Graphics memory in use', 'vram'] };   // tooltip, icon
+function idleCfg() { return { date: true, weather: true, cpu: true, ram: true, gpu: true, net: true, battery: true, alerts: true, ...(S.settings.idleStats || {}) }; }
 // Hovering only reveals the hidden stats when hover doesn't open the panel (Open = Click).
 // Otherwise the panel opens right away and briefly flashing the extra chips just looks glitchy.
 function hoverRevealsStats() { return S.settings.idleMinimal && (S.settings.openDelay ?? 140) < 0; }
@@ -88,7 +90,12 @@ function idleStatsOn() {
   const onBattery = S.batt && hasBattery() && !S.batt.charging;
   const list = [];
   if (o.weather && S.weather) list.push('weather');
-  if (!minimal) { if (o.cpu) list.push('cpu'); if (o.ram) list.push('ram'); if (o.net) list.push('net'); }
+  if (!minimal) {
+    if (o.cpu) list.push('cpu');
+    if (o.ram) list.push('ram');
+    if (o.gpu && S.sys && S.sys.gpu != null) list.push('gpu');   // only on PCs that report GPU load
+    if (o.net) list.push('net');
+  }
   if (o.alerts && unread > 0) list.push('alerts');
   if (o.battery && hasBattery() && (!minimal || onBattery)) list.push('battery');
   return list;
@@ -121,7 +128,7 @@ function battMode() {
 }
 function battChip(mode) {
   if (mode === 'full') return `<span class="cs bfull" title="Plugged in · fully charged"><span class="cs-ic">${icon('bolt')}</span></span>`;
-  return `<span class="bat ${mode}" id="cBat" title="Battery"><span class="bat-fill" id="cBatFill"></span><b id="cBatPct"></b>${mode === 'chg' ? `<span class="bat-bolt">${icon('bolt')}</span>` : ''}</span>`;
+  return `<span class="bat ${mode}${S.game && mode !== 'chg' ? ' gwarn' : ''}" id="cBat" title="${S.game && mode !== 'chg' ? 'On battery: plug in for full gaming performance' : 'Battery'}"><span class="bat-fill" id="cBatFill"></span><b id="cBatPct"></b>${mode === 'chg' ? `<span class="bat-bolt">${icon('bolt')}</span>` : ''}</span>`;
 }
 // day or night for the sun/moon beside the clock: the weather location knows, else the clock decides
 function isNight() {
@@ -269,6 +276,7 @@ function expand(tab) {
   clearTimeout(peekTimer);
   clearTimeout(enterTimer);
   if (tab) setTab(tab);
+  else if (S.game && S.mode !== 'expanded') setTab('game');           // playing: straight to the Game page
   else if (isStacked() && S.mode !== 'expanded') setTab('overview');   // Stacked always opens on every section
   setMode('expanded');
 }
@@ -320,7 +328,7 @@ api.on('hover', h => {
   }
   if (h) {
     clearTimeout(leaveTimer);
-    const delay = S.settings.openDelay ?? 140;
+    const delay = S.game ? -1 : S.settings.openDelay ?? 140;   // gaming: click or Ctrl+Alt+G opens it
     const hold = S.mode === 'peek' && S.peekInteractive;
     if (S.mode !== 'expanded' && !S.suppressExpand && !hold && delay >= 0) {
       clearTimeout(enterTimer);
@@ -348,7 +356,7 @@ document.addEventListener('keydown', e => {
 });
 
 // ================================================================== tabs + header
-const TAB_NAMES = { home: 'Home', apps: 'Apps', shelf: 'Shelf', tools: 'Focus', system: 'System', alerts: 'Alerts', settings: 'Settings' };
+const TAB_NAMES = { game: 'Game', home: 'Home', apps: 'Apps', shelf: 'Shelf', tools: 'Focus', system: 'System', alerts: 'Alerts', settings: 'Settings' };
 function setTab(tab) {
   S.tab = tab;
   island.dataset.view = tab === 'overview' ? 'overview' : '';
@@ -434,22 +442,25 @@ let compactKey = '';
 function renderCompact() {
   const playing = isPlaying();
   const tA = timerActive();
-  const left = playing ? 'art' : 'time';
-  const center = playing ? 'title' : '';
-  const st = idleStatsOn();
-  const right = tA ? 'timer' : playing ? 'eq' : (st.length ? 'stats' : idleCfg().date ? 'none' : 'date');
+  const gm = S.game;                    // game mode: game icon + time played, then the hardware stats
+  const left = gm ? 'game' : playing ? 'art' : 'time';
+  const center = gm ? '' : playing ? 'title' : '';
+  const st = gm ? gameStatsOn() : idleStatsOn();
+  const right = gm ? 'stats' : tA ? 'timer' : playing ? 'eq' : (st.length ? 'stats' : idleCfg().date ? 'none' : 'date');
   const ind = (typeof indicatorsHTML === 'function') ? indicatorsHTML() : '';
   const night = isNight();
   const wx = S.weather ? wxIcon(S.weather.code, S.weather.isDay !== false) : '';
   const showDate = idleCfg().date;
   const nm = st.includes('net') ? netMode() : '', bm = st.includes('battery') ? battMode() : '';
   const unread = typeof ALERTS !== 'undefined' ? ALERTS.unread : 0;
-  const key = `${left}|${center}|${right}|${st.join()}|${night}|${wx}|${showDate}|${nm}|${bm}|${unread}|${playing ? S.media.title + S.media.thumbId : ''}|${ind}`;
+  const key = `${left}|${center}|${right}|${st.join()}|${night}|${wx}|${showDate}|${nm}|${bm}|${unread}|${playing ? S.media.title + S.media.thumbId : ''}|${ind}|${gm ? gm.exe + (gm.icon ? 1 : 0) + (gm.poster ? 1 : 0) : ''}`;
 
   if (key !== compactKey) {
     compactKey = key;
     const m = S.media;
-    $('cLeft').innerHTML = left === 'art'
+    $('cLeft').innerHTML = left === 'game'
+      ? `<span class="c-game${gm.poster ? ' has-poster' : ''}" title="${esc(gm.name)}">${gameArtHTML(gm)}</span><span class="c-time c-gtime" id="cGameTime" title="Time played"></span>`
+      : left === 'art'
       ? `<div class="c-art-wrap"><div class="c-art" id="cArt" style="${m.thumb ? `background-image:url('${m.thumb}')` : ''}">${m.thumb ? '' : icon('music')}</div></div><span class="c-time" id="cTime"></span>`
       : `<span class="c-sky ${night ? 'night' : 'day'}" title="${night ? 'Night' : 'Day'}">${icon(night ? 'skyMoon' : 'skySun')}</span><span class="c-time" id="cTime"></span>${showDate ? '<span class="c-dsep"></span><span class="c-dt" id="cDt"></span>' : ''}`;
     $('cCenter').innerHTML = center === 'title'
@@ -463,7 +474,7 @@ function renderCompact() {
           : k === 'alerts' ? `<span class="cs bell" title="${unread} unread notification${unread > 1 ? 's' : ''}: click to open"><span class="cs-ic">${icon('bell')}</span><b>${unread > 9 ? '9+' : unread}</b></span>`
           : k === 'weather' ? `<span class="cs wx" title="${esc(S.settings.city || 'Weather')}"><span class="cs-ic">${icon(wx)}</span><b id="csWx">–</b></span>`
           : k === 'net' ? netChip(nm)
-          : `<span class="cs ${k}" title="${k === 'cpu' ? 'Processor' : 'Memory'} use"><span class="cs-ic">${icon(k === 'cpu' ? 'chip' : 'ram')}</span><b id="cs_${k}">–</b></span>`).join('')}</div>`
+          : `<span class="cs ${k}" title="${STAT_CHIP[k][0]}"><span class="cs-ic">${icon(STAT_CHIP[k][1])}</span><b id="cs_${k}">–</b></span>`).join('')}</div>`
       : right === 'none' ? ''
       : `<span class="c-date" id="cDate"></span>`);
     hydrateIcons($('cRight'));
@@ -494,9 +505,15 @@ function renderCompact() {
     g.classList.toggle('low', !S.batt.charging && pct <= 20);
   }
   if (right === 'stats') {
-    for (const k of ['cpu', 'ram']) {
+    if ($('cs_vram') && S.sys && S.sys.vramUsed > 0) {
+      const el = $('cs_vram'), pct = S.sys.vramTotal > 0 ? S.sys.vramUsed / S.sys.vramTotal * 100 : 0;
+      el.innerHTML = `${(S.sys.vramUsed / 1073741824).toFixed(1)}<small>GB</small>`;
+      el.parentElement.classList.toggle('hot', pct >= 85); el.parentElement.classList.toggle('crit', pct >= 90);
+    }
+    if ($('cGameTime') && S.game) $('cGameTime').textContent = fmtSession(Date.now() - S.game.start);
+    for (const k of ['cpu', 'ram', 'gpu']) {
       const el = $('cs_' + k);
-      if (el && S.sys) { el.textContent = S.sys[k] + '%'; el.parentElement.classList.toggle('hot', S.sys[k] >= 85); }
+      if (el && S.sys && S.sys[k] != null) { el.textContent = S.sys[k] + '%'; el.parentElement.classList.toggle('hot', S.sys[k] >= 85); el.parentElement.classList.toggle('crit', S.sys[k] >= 90); }
     }
     if ($('csNet') && typeof NET !== 'undefined' && NET.cur) {
       const [n, u] = shortRate(NET.cur.rx).split(' ');
@@ -974,9 +991,25 @@ function cpuLabel(name, cores) {
   const n = name.replace(/\((R|TM|tm|r)\)/g, '').replace(/\s+with\s+.*$/i, '').replace(/\bCPU\b/g, '').replace(/@.*$/, '').replace(/\d+(th|st|nd|rd) Gen\s*/i, '').replace(/\s+/g, ' ').trim();
   return `${n} · ${cores} threads`;
 }
+function gpuLabel(name) {
+  return name.replace(/\((R|TM|tm|r)\)/g, '').replace(/^(NVIDIA|AMD|Intel)\s+/i, '').replace(/^GeForce\s+/i, '').replace(/\s+(Laptop|Mobile)\s+GPU$/i, ' Laptop').replace(/\s+/g, ' ').trim();
+}
 function renderSys() {
   const s = S.sys;
   if (s) {
+    $('gpuCard').hidden = s.gpu == null;
+    if (s.gpu != null) {
+      $('gpuVal').textContent = s.gpu + '%';
+      const gb = b => (b / 1073741824).toFixed(1);
+      const vram = s.vramTotal > 0 ? `${gb(s.vramUsed)}/${gb(s.vramTotal)} GB` : s.vramUsed > 0 ? `${gb(s.vramUsed)} GB` : '';
+      $('gpuSub').textContent = [gpuLabel(s.gpuName || ''), vram].filter(Boolean).join(' · ');
+      $('gpuSub').title = s.gpuName || '';
+      spark($('gpuSpark'), s.gpuHistory);
+    }
+    for (const [k, id] of [['cpu', 'cpuVal'], ['ram', 'ramVal'], ['gpu', 'gpuVal']]) {   // big numbers: orange from 85%, red from 90%
+      $(id).classList.toggle('hot', s[k] != null && s[k] >= 85);
+      $(id).classList.toggle('crit', s[k] != null && s[k] >= 90);
+    }
     $('cpuVal').textContent = s.cpu + '%';
     $('ramVal').textContent = s.ram + '%';
     $('cpuName').textContent = cpuLabel(s.cpuName, s.cores);
@@ -1160,7 +1193,7 @@ function onBattery(chargeChanged) {
   if (chargeChanged && hasBattery()) {
     peek('battery', b.charging
       ? `<div class="pk-icon green">${icon('bolt')}</div><div class="pk-text"><div class="pk-title">Charging</div><div class="pk-sub">${pct}% · ${battSub(b)}</div></div><div class="pk-val" style="color:var(--green)">${pct}%</div>`
-      : `<div class="pk-icon">${icon('plug')}</div><div class="pk-text"><div class="pk-title">On battery</div><div class="pk-sub">${battSub(b)}</div></div><div class="pk-val">${pct}%</div>`,
+      : `<div class="pk-icon">${icon('plug')}</div><div class="pk-text"><div class="pk-title">On battery</div><div class="pk-sub">${S.game ? 'Plug in for full gaming performance' : battSub(b)}</div></div><div class="pk-val">${pct}%</div>`,
       { width: 340, duration: 2800 });
   }
   if (!b.charging && pct <= 20 && !warnedLow && hasBattery()) {

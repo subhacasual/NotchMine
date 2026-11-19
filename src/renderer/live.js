@@ -362,7 +362,7 @@ api.on('download', it => {
 // buttons + dragging inside pop-ups
 layers.peek.addEventListener('click', async e => {
   const b = e.target.closest('.pk-btn');
-  if (!b) return;
+  if (!b || (b.dataset.act || '').startsWith('game-')) return;   // game mode's own buttons: game.js
   const act = b.dataset.act;
   if (act === 'ocr') b.innerHTML = 'Reading…';
   await runAction(act, b.dataset.path, b);

@@ -10,6 +10,7 @@ const os = require('os');
 const { spawn, exec } = require('child_process');
 const lyrics = require('./lyrics');
 const artwork = require('./artwork');
+const gameart = require('./gameart');
 const phone = require('./phone');
 
 // ------------------------------------------------------------------ constants
@@ -59,18 +60,25 @@ const DEFAULTS = {
   deskEqIntensity: 60,      // 0-100: how bright / strong the bars are
   deskEqHeight: 45,         // 0-100: how high the bars can jump
   deskEqPos: 'above',       // 'above' the taskbar | 'bottom' of the screen (over the taskbar)
-  deskEqScreens: 'notch',   // 'all' | 'notch'
+  deskEqScreens: 'all',     // 'all' | 'notch'
   deskEqMirror: true,       // bass in the middle, highs to the sides (else left → right)
+  deskEqStyle: 'bars',      // look of the desktop equalizer: one of STYLES in renderer/deskeq.js (Settings → Style)
   partyLights: { beams: true, glow: true, particles: true, albumArt: true },
   partyAwake: true,         // keep the display awake while partying
   posX: 0.5,                // 0 = left edge, 0.5 = centre, 1 = right edge (of the chosen display)
   posY: 0,                  // island shape only: 0 = top … 1 = as low as it can go
   sideMode: true,           // move to the right edge (vertical) while one of sideApps is active
   sideApps: [{ exe: 'chrome.exe', name: 'Google Chrome', path: '' }],
+  gameMode: true,           // a game in front: the notch moves to the top-right corner and shows game stats
+  gameAuto: true,           // spot games by itself (Windows' game list, game library folders, a question for unknown ones)
+  gameQuiet: true,          // hold notification pop-ups while playing
+  gameArtOnline: true,      // no poster in Steam's files on this PC: look it up on the Steam store (game name only)
+  gameApps: [],             // always a game: [{ exe, name, path }]
+  notGames: [],             // never a game: [{ exe, name, path }]
   sideFade: true,           // side mode: the resting pill is almost see-through until the mouse touches it
   sideFadeBg: 95,           // 0-100: how see-through the pill's background gets then (100 = gone)
   sideFadeFg: 85,           // 0-100: how see-through its icons / info get then (100 = gone)
-  idleStats: { date: true, weather: true, cpu: true, ram: true, net: true, battery: true, alerts: true },   // idle pill
+  idleStats: { date: true, weather: true, cpu: true, ram: true, gpu: true, net: true, battery: true, alerts: true },   // idle pill
   idleMinimal: false,       // idle pill shows only sky + time + date + weather (+ urgent things); the rest on hover
   phoneWarned: false,       // user ticked "don't show the phone-drop warning again"
   accentCustom: '#a78bfa',  // used when accentMode is 'custom'
@@ -159,16 +167,18 @@ let sideHwnd = 0;                                    // the window that sent us 
 function onForeground(m) {
   const self = path.basename(process.execPath).toLowerCase();
   if (!m.exe || m.exe === self || SHELL_CLASSES.test(m.cls || '')) return;
-  if (DESKTOP_CLASSES.test(m.cls || '')) { lastFg = null; evaluateSide(); return; }
+  if (DESKTOP_CLASSES.test(m.cls || '')) { lastFg = null; evaluateGame(); evaluateSide(); return; }
   lastFg = m;
   const i = recentApps.findIndex(a => a.exe === m.exe);
   if (i >= 0) recentApps.splice(i, 1);
   recentApps.unshift({ exe: m.exe, name: m.name || m.exe, path: m.path || '' });
   if (recentApps.length > 14) recentApps.length = 14;
+  evaluateGame();
   evaluateSide();
 }
 // The watched window was minimized, made smaller or closed: go back to the usual spot.
-let sideTestNoWatch = false;      // self-test only: the fake window it uses doesn't exist
+let sideTestNoWatch = false;
+let snapFgLock = false;           // self-test only: the game steps fake the foreground app      // self-test only: the fake window it uses doesn't exist
 function onTracked(msg) {
   if (sideTestNoWatch || !sideActive || msg.hwnd !== sideHwnd) return;
   if (msg.state === 3) return;                               // still maximized
@@ -181,7 +191,7 @@ function evaluateSide() {
   // side mode only while a listed app is in front AND maximized, on the notch's screen
   // …but not while a full-screen app (a movie) fills that screen: then the notch stays at the top as a thin line
   const fsQuiet = fullscreenOn && settings.fullscreenMode !== 'show';
-  if (m && m.max && !fsQuiet && settings.sideMode && (settings.sideApps || []).some(a => a.exe === m.exe)) {
+  if (m && m.max && !fsQuiet && !gameOn() && settings.sideMode && (settings.sideApps || []).some(a => a.exe === m.exe)) {
     const c = screen.screenToDipPoint({ x: Math.round((m.l + m.r) / 2), y: Math.round((m.t + m.b) / 2) });
     on = screen.getDisplayNearestPoint(c).id === targetDisplay().id;
   }
@@ -194,9 +204,127 @@ function evaluateSide() {
   send('side', on);
 }
 
+// ---- game mode: a game in front -> the notch moves to the top-right corner and shows game stats
+// A game is: on the user's list, in Windows' own game list (Game Bar remembers every game it saw), or
+// installed in a game library folder. An unknown app that runs full screen and keeps the graphics
+// card busy gets a question ("Is this a game?") instead of switching on by itself.
+let windowsGames = new Set(), windowsGameExes = new Set();
+const GAME_DIRS = /\\(steamapps\\common|epic games|xboxgames|gog galaxy\\games|gog games|riot games|battle\.net|ea games|origin games|ubisoft game launcher\\games|rockstar games|amazon games\\library)\\/i;
+const LAUNCHERS = /^(steam|steamwebhelper|epicgameslauncher|epicwebhelper|battle\.net|riotclientservices|riotclientux|eadesktop|origin|galaxyclient|upc|ubisoftconnect|rockstarlauncher|launcher|xboxpcapp|gamebar|crashreportclient|unrealcefsubprocess)\.exe$/i;
+let game = null;                 // the session: { exe, name, path, pid, start, peakGpu, gpuSum, gpuN, icon }
+let gameShown = false;           // game mode is on screen (the game is in front)
+let gameStartTimer = 0, gameEndTimer = 0, gameCandidate = null;
+const gameOn = () => !!(game && gameShown);
+const listed = (list, m) => (list || []).some(a => a.exe === m.exe);
+function isGame(m) {
+  if (!m || !m.exe || !settings.gameMode) return false;
+  if (listed(settings.notGames, m)) return false;
+  if (listed(settings.gameApps, m)) return true;
+  if (!settings.gameAuto || LAUNCHERS.test(m.exe)) return false;
+  const p = (m.path || '').toLowerCase();
+  if (p) return windowsGames.has(p) || GAME_DIRS.test(p);
+  return windowsGameExes.has(m.exe);                       // no path (a protected process): go by the exe name
+}
+function gamePayload() {
+  if (!gameOn()) return null;
+  return { exe: game.exe, name: game.name, path: game.path, start: game.start, icon: game.icon || null, poster: game.poster || null, hero: game.hero || null };
+}
+function gameNameOf(m) {
+  const n = (m.name || '').trim();
+  return n && n.toLowerCase() !== m.exe.replace(/\.exe$/i, '').toLowerCase() ? n : m.exe.replace(/\.exe$/i, '');
+}
+function evaluateGame() {
+  const m = lastFg;
+  if (isGame(m)) {
+    clearTimeout(gameEndTimer); gameEndTimer = 0;
+    if (game && game.exe === m.exe) {                         // back in the same game: carry on right away
+      if (m.pid) game.pid = m.pid;
+      if (!gameShown) showGame(true);
+      return;
+    }
+    if (gameCandidate && gameCandidate.exe === m.exe) return;
+    gameCandidate = m;
+    clearTimeout(gameStartTimer);
+    gameStartTimer = setTimeout(() => {                      // in front for a few seconds: it's really being played
+      const c = gameCandidate; gameCandidate = null;
+      if (!c || !lastFg || lastFg.exe !== c.exe) return;
+      if (game) finishGame();                                // a different game: wrap up the old session
+      game = { exe: c.exe, name: gameNameOf(c), path: c.path || '', pid: c.pid || 0, start: Date.now(), peakGpu: 0, gpuSum: 0, gpuN: 0, icon: null };
+      showGame(true);
+      const g = game;
+      if (g.path) exeIcon(g.path).then(ic => { if (game === g && ic) { g.icon = ic; if (gameShown) send('game', gamePayload()); } }).catch(() => {});
+      gameart.find({ exe: g.exe, path: g.path, name: g.name, online: settings.gameArtOnline !== false })      // the game's poster
+        .then(a => { if (game === g && a && a.poster) { g.poster = a.poster; g.hero = a.hero; if (gameShown) send('game', gamePayload()); } });
+    }, 3000);
+    return;
+  }
+  gameCandidate = null; clearTimeout(gameStartTimer);
+  if (game && !settings.gameMode) { clearTimeout(gameEndTimer); gameEndTimer = 0; game = null; showGame(false); return; }   // switched off
+  if (gameShown && !gameEndTimer) {
+    gameEndTimer = setTimeout(() => {                        // left the game for a while: back to the normal notch
+      gameEndTimer = 0;
+      showGame(false);
+      if (!gameAlive()) finishGame();                        // closed (not just Alt-Tabbed away)
+    }, 5000);
+  }
+}
+function showGame(on) {
+  if (gameShown === on) return;
+  gameShown = on;
+  if (!app.isPackaged) console.log('[game]', on ? `ON ${game && game.exe}` : 'off');
+  evaluateSide();
+  placeWindow();
+  refreshVisibility();
+  send('game', gamePayload());
+}
+function gameAlive() {
+  if (!game || !game.pid) return false;
+  try { process.kill(game.pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }   // EPERM: alive, just not ours
+}
+function finishGame() {
+  if (!game) return;
+  const g = game;
+  game = null;
+  if (gameShown) showGame(false);
+  send('game-summary', { name: g.name, icon: g.icon || null, poster: g.poster || null, ms: Date.now() - g.start, peakGpu: g.peakGpu, avgGpu: g.gpuN ? Math.round(g.gpuSum / g.gpuN) : null });
+}
+// a paused session (Alt-Tabbed away) ends once the game is closed
+setInterval(() => { if (game && !gameShown && !gameEndTimer && !gameAlive()) finishGame(); }, 5000);
+
+// unknown app, full screen on the notch's screen, graphics card busy for a while -> ask once
+let askAcc = 0, askExe = '';
+const askedExes = new Set();
+function onGameGpu(g, fgUtil) {
+  if (gameOn() && g) { game.peakGpu = Math.max(game.peakGpu, g.util); game.gpuSum += g.util; game.gpuN++; }
+  const m = lastFg;
+  const unknown = m && m.exe && settings.gameMode && settings.gameAuto && !gameOn() && !gameCandidate && !isGame(m) &&
+    !askedExes.has(m.exe) && !LAUNCHERS.test(m.exe);
+  if (!unknown || !fullscreenOn || fgUtil < 40) { askAcc = 0; askExe = ''; return; }
+  if (askExe !== m.exe) { askExe = m.exe; askAcc = 0; }
+  if (++askAcc < 12) return;                                 // about 15 s of steady load
+  askedExes.add(m.exe);
+  askAcc = 0;
+  exeIcon(m.path).catch(() => null).then(ic => send('game-ask', { exe: m.exe, name: gameNameOf(m), path: m.path || '', icon: ic || null }));
+}
+ipcMain.on('game-answer', (_e, a) => {
+  if (!a || typeof a.exe !== 'string') return;
+  const entry = { exe: a.exe, name: String(a.name || a.exe), path: String(a.path || '') };
+  const strip = list => (list || []).filter(x => x.exe !== entry.exe);
+  settings.gameApps = a.game ? [...strip(settings.gameApps), entry] : strip(settings.gameApps);
+  settings.notGames = a.game ? strip(settings.notGames) : [...strip(settings.notGames), entry];
+  saveSettings();
+  send('settings', settings);
+  if (!a.game && game && game.exe === entry.exe) { clearTimeout(gameEndTimer); gameEndTimer = 0; game = null; showGame(false); }   // "not a game": stop now, no summary
+  evaluateGame();
+});
+
 function placeWindow() {
   if (!win || dragTimer) return;
   const d = targetDisplay();
+  if (gameOn()) {                                            // gaming: top-right corner (the renderer keeps the pill inside)
+    placeAt(d, d.bounds.x + d.bounds.width, d.bounds.y + (isIsland() ? Math.round(8 * zoom()) : 0));
+    return;
+  }
   if (sideActive) {
     const z = zoom(), w = Math.round(WIN_W * z);
     if (settings.layout === 'stacked') {                     // the tall column: centred in the work area
@@ -218,7 +346,7 @@ function placeWindow() {
 let dragTimer = null, dragGrabX = 0, dragGrabY = 0, dragDisplay = null, dragCx = 0, dragY = 0;
 function pillCenterX() { return win.getBounds().x + anchorCss * zoom(); }
 function dragStart() {
-  if (!win || dragTimer || sideActive) return;        // side mode has a fixed spot
+  if (!win || dragTimer || sideActive || gameOn()) return;   // side mode and game mode have a fixed spot
   const p = screen.getCursorScreenPoint();
   dragGrabX = p.x - pillCenterX();
   dragGrabY = p.y - win.getBounds().y;
@@ -313,8 +441,8 @@ function setVisible(visible) {
 function refreshVisibility() {
   fullscreenOn = fullscreenDisplayId !== null && fullscreenDisplayId === targetDisplay().id;
   evaluateSide();                                           // side mode steps aside during full-screen (no-op if unchanged)
-  setVisible(!userHidden && !partyWins.length && !(fullscreenOn && settings.fullscreenMode === 'hide'));
-  send('fullscreen', fullscreenOn && settings.fullscreenMode === 'dim');   // renderer fades to a thin line
+  setVisible(!userHidden && !partyWins.length && !(fullscreenOn && settings.fullscreenMode === 'hide' && !gameOn()));
+  send('fullscreen', fullscreenOn && settings.fullscreenMode === 'dim' && !gameOn());   // renderer fades to a thin line
   syncDeskEq();
 }
 function onFullscreen(msg) {
@@ -357,7 +485,7 @@ function eqBounds(d) {
 }
 function syncDeskEq() {
   if (!app.isReady()) return;
-  const want = settings.deskEq && !partyWins.length && !(fullscreenDisplayId !== null && settings.fullscreenMode !== 'show');
+  const want = settings.deskEq && !partyWins.length && !gameOn() && !(fullscreenDisplayId !== null && settings.fullscreenMode !== 'show');
   const displays = !want ? [] : settings.deskEqScreens === 'all' ? screen.getAllDisplays() : [targetDisplay()];
   const ids = new Set(displays.map(d => d.id));
   for (const e of eqWins.slice()) {
@@ -396,6 +524,8 @@ function startParty() {
   const mode = settings.partyScreens || 'all';
   const list = mode === 'all' ? all : mode === 'main' ? [primary] : [notchD];
   const centre = mode === 'main' ? primary : notchD;           // the big orb goes where the notch lives
+  list.sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);   // left → right: the orbs' carousel order
+  startOrbPlan(list.map(d => ({ ...d.bounds, w: d.bounds.width, h: d.bounds.height, main: d.id === centre.id || list.length === 1 })));
   for (const d of list) {
     const role = d.id === centre.id || list.length === 1 ? 'main' : 'side';
     const w = new BrowserWindow({
@@ -426,7 +556,61 @@ function startParty() {
 function stopParty() {
   for (const w of partyWins.slice()) if (!w.isDestroyed()) w.close();
 }
+// ---- the travelling orbs. One orb per party screen. Each drifts a little around its home spot every 5–10 s,
+// and every 15–25 s they all move one screen over together (the end one goes back the long way, straight across
+// the real desk layout, so an orb always leaves through the edge facing its next screen). Main is the director: it sends the plan (screen layout, which screen each orb is on, drift moves,
+// travels) with absolute times, and every screen draws whatever part of any orb falls on it, so an orb
+// crossing from one screen to the next is drawn half on each.
+let orbPlan = null, orbTimers = [];
+const orbEase = k => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
+function orbDriftAt(o, now) {
+  const e = orbEase(Math.max(0, Math.min(1, (now - o.t0) / o.dur)));
+  return [o.from[0] + (o.to[0] - o.from[0]) * e, o.from[1] + (o.to[1] - o.from[1]) * e];
+}
+function orbPick(cur, main) {                 // a new spot (fractions of the screen) a little off home, or home again
+  if (Math.random() < 0.25 && (cur[0] || cur[1])) return [0, 0];
+  let x, y;
+  do {
+    x = (Math.random() * 2 - 1) * 0.13;
+    y = main ? -0.09 + Math.random() * 0.12 : (Math.random() * 2 - 1) * 0.09;   // main: clear of the now-playing text
+  } while (Math.hypot(x - cur[0], y - cur[1]) < 0.05);
+  return [x, y];
+}
+function sendOrbPlan() { for (const w of partyWins) if (!w.isDestroyed()) w.webContents.send('party-plan', orbPlan); }
+function orbLater(fn, ms) { const id = setTimeout(() => { orbTimers = orbTimers.filter(x => x !== id); if (orbPlan) fn(); }, ms); orbTimers.push(id); }
+function startOrbPlan(screens) {
+  stopOrbPlan();
+  orbPlan = { screens, orbs: screens.map((_, j) => ({ slot: j, from: [0, 0], to: [0, 0], t0: 0, dur: 1 })), travel: null };
+  const drift = j => orbLater(() => {
+    if (!orbPlan.travel) {                                    // no small moves while the orbs are changing screens
+      const o = orbPlan.orbs[j], now = Date.now() + 60, cur = orbDriftAt(o, now);
+      Object.assign(o, { from: cur, to: orbPick(cur, screens[o.slot].main), t0: now, dur: 1500 + Math.random() * 900 });
+      sendOrbPlan();
+    }
+    drift(j);
+  }, 5000 + Math.random() * 5000);
+  screens.forEach((_, j) => drift(j));
+  const n = screens.length;
+  const travel = () => orbLater(() => {
+    const now = Date.now() + 80, dur = 2800, dir = Math.random() < 0.5 ? 1 : -1;
+    orbPlan.travel = { t0: now, dur, dir };
+    for (const o of orbPlan.orbs) {                           // each lands on a fresh spot of its new screen
+      const cur = orbDriftAt(o, now), dest = (o.slot + dir + n) % n;
+      Object.assign(o, { from: cur, to: orbPick(cur, screens[dest].main), t0: now, dur });
+    }
+    sendOrbPlan();
+    orbLater(() => {
+      for (const o of orbPlan.orbs) o.slot = (o.slot + dir + n) % n;
+      orbPlan.travel = null;
+      sendOrbPlan();
+      travel();
+    }, now - Date.now() + dur + 50);
+  }, 15000 + Math.random() * 10000);
+  if (n > 1) travel();
+}
+function stopOrbPlan() { for (const id of orbTimers) clearTimeout(id); orbTimers = []; orbPlan = null; }
 function endParty() {
+  stopOrbPlan();
   if (partyBlocker !== null) { try { powerSaveBlocker.stop(partyBlocker); } catch { /* ignore */ } partyBlocker = null; }
   refreshVisibility();
   send('party', false);
@@ -498,10 +682,21 @@ function handleBridge(msg) {
   switch (msg.type) {
     case 'ready':
       bridgeRestarts = 0;
+      bridgeCmd('games');
       bridgeCmd(`notif ${settings.notifications ? 'on' : 'off'}`);
       break;
     case 'net':
       send('net', msg);
+      break;
+    case 'gpu':
+      if (Number.isFinite(msg.util)) lastGpu = { util: Math.max(0, Math.min(100, msg.util)), vram: +msg.vram || 0, vramTotal: +msg.vramTotal || 0, name: String(msg.name || ''), at: Date.now() };
+      onGameGpu(lastGpu, +msg.fgUtil || 0);
+      break;
+    case 'games':
+      windowsGames = new Set([].concat(msg.paths || []).map(p => String(p).toLowerCase()));
+      windowsGameExes = new Set([...windowsGames].map(p => path.basename(p)));
+      if (!app.isPackaged) console.log('[game] Windows knows', windowsGames.size, 'games');
+      evaluateGame();
       break;
     case 'conn':
       lastState.conn = msg;
@@ -526,7 +721,7 @@ function handleBridge(msg) {
       if (tray) tray.setContextMenu(buildTrayMenu());
       break;
     case 'foreground':
-      onForeground(msg);
+      if (!snapFgLock) onForeground(msg);           // self-test: ignore the real desktop while it fakes a game
       break;
     case 'tracked':
       onTracked(msg);
@@ -612,6 +807,9 @@ function bridgeCmd(cmd) {
 let prevCpu = null;
 const cpuHistory = [];
 const ramHistory = [];
+const gpuHistory = [];
+const vramHistory = [];
+let lastGpu = null;             // latest GPU reading from the bridge (null: no GPU counters on this PC)
 function cpuSnapshot() {
   let idle = 0, total = 0;
   for (const c of os.cpus()) {
@@ -633,6 +831,9 @@ function sampleSystem() {
   const ram = (used / total) * 100;
   cpuHistory.push(Math.round(cpu)); if (cpuHistory.length > 40) cpuHistory.shift();
   ramHistory.push(Math.round(ram)); if (ramHistory.length > 40) ramHistory.shift();
+  const gpu = lastGpu && Date.now() - lastGpu.at < 10000 ? lastGpu : null;   // stale reading: hide it
+  if (gpu) { gpuHistory.push(gpu.util); if (gpuHistory.length > 40) gpuHistory.shift(); }
+  if (gpu && gpu.vramTotal > 0) { vramHistory.push(Math.round(gpu.vram / gpu.vramTotal * 100)); if (vramHistory.length > 40) vramHistory.shift(); }
   send('sys', {
     cpu: Math.round(cpu),
     ram: Math.round(ram),
@@ -643,6 +844,12 @@ function sampleSystem() {
     cores: os.cpus().length,
     cpuHistory: [...cpuHistory],
     ramHistory: [...ramHistory],
+    gpu: gpu ? gpu.util : null,
+    gpuName: gpu ? gpu.name : '',
+    vramUsed: gpu ? gpu.vram : 0,
+    vramTotal: gpu ? gpu.vramTotal : 0,
+    gpuHistory: [...gpuHistory],
+    vramHistory: [...vramHistory],
   });
 }
 
@@ -870,7 +1077,7 @@ ipcMain.on('brightness-refresh', () => bridgeCmd('bright get'));
 
 ipcMain.handle('side-apps', async () => Promise.all(recentApps.map(async a => ({ ...a, icon: await exeIcon(a.path) }))));
 ipcMain.handle('app-icon', (_e, p) => exeIcon(p));
-ipcMain.handle('init', () => ({ side: sideActive, fullscreenDim: fullscreenOn && settings.fullscreenMode === 'dim', anchor: anchorCss, settings, state: lastState, clipboard: clipHistory, notifs: notifLog, recent, phone: phone.status() }));
+ipcMain.handle('init', () => ({ game: gamePayload(), side: sideActive, fullscreenDim: fullscreenOn && settings.fullscreenMode === 'dim', anchor: anchorCss, settings, state: lastState, clipboard: clipHistory, notifs: notifLog, recent, phone: phone.status() }));
 
 // v3: mixer, mic, lyrics, captures, phone drop
 ipcMain.on('mixer-get', () => bridgeCmd('mixer get'));
@@ -938,7 +1145,13 @@ ipcMain.handle('phone-stop', () => phone.stop('closed'));
 // party mode
 ipcMain.on('party-start', () => startParty());
 ipcMain.on('party-stop', () => stopParty());
-ipcMain.handle('party-init', () => ({ settings, media: lastState.media || null, accent: lastAccent, volume: lastState.volume || null }));
+ipcMain.handle('party-init', e => ({
+  settings, media: lastState.media || null, accent: lastAccent, volume: lastState.volume || null,
+  orbPlan, orbIndex: Math.max(0, partyWins.findIndex(w => !w.isDestroyed() && w.webContents === e.sender)),
+}));
+ipcMain.on('party-sync', (e, s) => {                 // the main screen's orb spin → the other screens
+  for (const w of partyWins) if (!w.isDestroyed() && w.webContents !== e.sender) w.webContents.send('party-sync', s);
+});
 ipcMain.on('accent-changed', (_e, rgb) => {
   if (typeof rgb !== 'string' || !/^\d{1,3}, ?\d{1,3}, ?\d{1,3}$/.test(rgb)) return;
   lastAccent = rgb;
@@ -950,6 +1163,7 @@ ipcMain.handle('settings-set', (_e, patch) => {
   if ('scale' in patch) applyScale();
   if ('posX' in patch || 'posY' in patch || 'displayId' in patch || 'shape' in patch || 'layout' in patch) placeWindow();
   if (['deskEq', 'deskEqPos', 'deskEqScreens', 'displayId', 'fullscreenMode'].some(k => k in patch)) syncDeskEq();
+  if (['gameMode', 'gameAuto', 'gameApps', 'notGames'].some(k => k in patch)) evaluateGame();
   if ('sideMode' in patch || 'sideApps' in patch || 'displayId' in patch) evaluateSide();
   if ('notifications' in patch) {
     bridgeCmd(`notif ${settings.notifications ? 'on' : 'off'}`);
@@ -1101,8 +1315,12 @@ app.whenReady().then(() => {
   globalShortcut.register('CommandOrControl+Alt+M', () => bridgeCmd('mic toggle'));
   // party mode on / off
   globalShortcut.register('CommandOrControl+Alt+P', () => (partyWins.length ? stopParty() : startParty()));
+  // open / close the panel without touching the mouse (made for game mode, works any time)
+  globalShortcut.register('CommandOrControl+Alt+G', () => send('panel-toggle'));
+  setInterval(() => bridgeCmd('games'), 10 * 60 * 1000);   // pick up games Windows learned about meanwhile
 
   lyrics.init(path.join(app.getPath('userData'), 'lyrics-cache.json'));
+  gameart.init(path.join(app.getPath('userData'), 'game-art'));
   loadRecentCaptures();
   seedImageSig();
   watchDownloads();
@@ -1232,6 +1450,29 @@ async function runSnapshots(dir) {
       await wait(400);
       console.log('[side] after switching app, active:', sideActive);
     }],
+    // ---- game mode: a game (found by its library folder) comes to the front for a few seconds
+    ['game-pill', async () => {
+      await js(`__notchDebug.S.pinned = false; __notchDebug.collapse()`);
+      const b = targetDisplay().bounds;
+      snapFgLock = true;
+      onForeground({ type: 'foreground', hwnd: 7, pid: 3999999, exe: 'forzahorizon5.exe', name: 'Forza Horizon 5', path: 'E:\\steam\\steamapps\\common\\ForzaHorizon5\\ForzaHorizon5.exe', cls: 'ForzaHorizon5', l: b.x, t: b.y, r: b.x + b.width, b: b.y + b.height, max: true });
+      await wait(3600);
+      console.log('[game] on:', gameOn(), 'window:', JSON.stringify(win.getBounds()));
+      await js(`__notchDebug.addNotif({ id: 9100, app: 'Discord', title: 'Arjun', body: 'gg', time: Date.now(), icon: null })`);   // held, not shown
+    }],
+    ['game-open', `__notchDebug.S.pinned = true; __notchDebug.expand()`],
+    ['game-settings', `__notchDebug.setTab('settings'); document.querySelector('#setNav [data-sec=game]').click()`],
+    ['game-ask', async () => {
+      await js(`__notchDebug.S.pinned = false; __notchDebug.collapse()`);
+      send('game-ask', { exe: 'mystery.exe', name: 'Mystery Racer', path: '', icon: null });
+    }],
+    ['game-summary', async () => {
+      await js(`__notchDebug.setMode('collapsed')`);
+      onForeground({ type: 'foreground', exe: 'code.exe', name: 'Visual Studio Code', path: '', cls: 'Chrome_WidgetWin_1', l: 0, t: 0, r: 100, b: 100 });
+      await wait(5600);                                      // leaves game mode; the (fake) game isn't running → summary
+      console.log('[game] after switching app, on:', gameOn());
+      snapFgLock = false;
+    }],
     ['phone-warn', `__notchDebug.S.pinned = true; __notchDebug.patchSettings({ phoneWarned: false }); __notchDebug.expand('shelf'); document.getElementById('phoneBtn').click()`],
     ['phone-recv', async () => {
       const qr = await require('qrcode').toDataURL('http://192.168.1.42:52814/3f9c1a7be2d04c51a8e6f0b2d9c47e15', { margin: 1, width: 360 });
@@ -1252,6 +1493,7 @@ async function runSnapshots(dir) {
       pw.destroy();
     }],
     ['settings-deskeq', `__notchDebug.S.pinned = true; __notchDebug.patchSettings({ deskEq: true, deskEqIntensity: 70, deskEqHeight: 45 }); __notchDebug.expand('settings'); document.querySelector('#setNav [data-sec=deskeq]').click()`],
+    ['settings-deskeq-style', `__notchDebug.S.pinned = true; __notchDebug.expand('settings'); document.querySelector('#setNav [data-sec=deskeq]').click(); setTimeout(() => document.querySelector('.dd[data-dd=deskEqStyle] .dd-btn').click(), 300)`],
     ['deskeq-live', async () => {
       await js(`__notchDebug.S.pinned = false; __notchDebug.collapse()`);
       await wait(3500);
@@ -1264,11 +1506,46 @@ async function runSnapshots(dir) {
       }
       console.log('[deskeq] click-through: ignore=', eqWins.every(e => !e.win.isFocusable()));
     }],
+    ['deskeq-styles', async () => {                 // every style, on the synthetic beat (no real audio needed)
+      const prevStyle = settings.deskEqStyle || 'bars';
+      await js(`__notchDebug.S.pinned = false; __notchDebug.collapse(); __notchDebug.patchSettings({ deskEq: true })`);
+      await wait(2500);
+      const demo = { type: 'media', active: true, app: 'Spotify.exe', title: 'Neon Skyline', artist: 'Demo Artist', status: 'Playing', position: 80, duration: 243, canPrev: true, canNext: true, canSeek: true };
+      const e = eqWins[0];
+      if (!e) { console.log('[deskeq-styles] no eq window'); return; }
+      await e.win.webContents.executeJavaScript('window.__eq.AU.an = null; document.documentElement.style.background = "#0b0b10"');   // dark backdrop for the shots
+      for (const style of ['bars', 'line', 'wave', 'dots', 'hills', 'reflect', 'blocks', 'neon', 'ridges', 'fountain', 'bubbles', 'city', 'aurora', 'heartbeat', 'lasers']) {
+        await js(`__notchDebug.patchSettings({ deskEqStyle: '${style}' })`);
+        for (let k = 0; k < 8; k++) { sendParty('media', { ...demo, updatedAt: Date.now() }); await wait(250); }
+        const img = await e.win.webContents.capturePage();
+        fs.writeFileSync(path.join(dir, `deskeq-style-${style}.png`), img.resize({ width: Math.round(img.getSize().width / 2) }).toPNG());
+      }
+      await js(`__notchDebug.patchSettings({ deskEqStyle: '${prevStyle}' })`);
+    }],
     ['theme-synthwave', `__notchDebug.patchSettings({ partyTheme: 'synthwave', vizPalette: 'accent' })`],
     ['theme-synthwave-sunset', `__notchDebug.patchSettings({ partyTheme: 'synthwave', vizPalette: 'sunset' })`],
     ['theme-warp', `__notchDebug.patchSettings({ partyTheme: 'warp', vizPalette: 'accent' })`],
     ['home-party-btn', `__notchDebug.S.pinned = true; __notchDebug.expand('home')`],
     ['settings-party', `__notchDebug.setTab('settings'); document.querySelector('#setNav [data-sec=party]').click()`],
+    ['party-eq-styles', async () => {               // party mode's bottom equalizer follows the desktop eq's Style
+      const prevStyle = settings.deskEqStyle || 'bars';
+      await js(`__notchDebug.S.pinned = false; __notchDebug.collapse(); notch.partyStart()`);
+      await wait(3000);
+      const demo = { type: 'media', active: true, app: 'Spotify.exe', title: 'Neon Skyline', artist: 'Demo Artist', status: 'Playing', position: 80, duration: 243, canPrev: true, canNext: true, canSeek: true };
+      const m = partyWins.find(w => w.webContents.getURL().includes('role=main')) || partyWins[0];
+      if (m) {
+        await m.webContents.executeJavaScript('window.__party.AU.an = null');
+        for (const style of ['bars', 'ridges', 'city', 'wave', 'blocks']) {
+          await js(`__notchDebug.patchSettings({ deskEqStyle: '${style}' })`);
+          for (let k = 0; k < 8; k++) { sendParty('media', { ...demo, updatedAt: Date.now() }); await wait(250); }
+          const img = await m.webContents.capturePage();
+          fs.writeFileSync(path.join(dir, `party-eq-${style}.png`), img.resize({ width: Math.round(img.getSize().width / 2) }).toPNG());
+        }
+      }
+      await js(`__notchDebug.patchSettings({ deskEqStyle: '${prevStyle}' })`);
+      stopParty();
+      await wait(1200);
+    }],
     ['party', async () => {
       await js(`__notchDebug.S.pinned = false; __notchDebug.collapse(); notch.partyStart()`);
       await wait(5000);
