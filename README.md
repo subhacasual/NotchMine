@@ -97,13 +97,14 @@ Right-click the **tray icon** for quick toggles: hide, display, party mode, desk
 
 ### The pill
 - **No music:** a glowing sun or moon (real day/night), time and date, weather, CPU, RAM, GPU, Wi-Fi bars (download speed only while something is really downloading), unread notifications and a minimal battery (just ⚡ when plugged in and full). Each item can be switched on or off, and there's a **Minimal** mode that shows details only on hover.
+- **Weather you can see:** the weather icon is animated (the sun's rays turn, clouds drift, rain and snow fall, lightning flickers). While it's raining or snowing outside, rain (with tiny splashes) or snow falls across the whole pill, behind your music too, and storms flash with lightning. While it rains, it also rains all over the open panel, on every page. It pauses in game mode and over full-screen apps (Settings → Appearance → *Rain & snow animation*).
 - **While music plays:** album art (or the sun/orb effect), the time, the title or the current **lyric line**, and a live equalizer.
 - **Focus timer:** a countdown ring while a Pomodoro is running.
 
 ### Home
 - **Music card:** artwork, app name, seekable progress, previous/play/next, lyrics view (click a line to jump to it), and a spectrum rising from the bottom of the card. Quick buttons start party mode or the desktop equalizer.
 - **Clock and month calendar.**
-- **Weather** with a 4-day forecast for any city.
+- **Weather** with a 4-day forecast for any city. The card is a live scene of the sky outside: sun rays, drifting clouds, fog, snow or stars (rain falls across the whole panel).
 
 ### Apps
 - **Your own launchpad:** add websites or apps (drag `.exe`/shortcuts/links in, or use *Add*), with real icons.
@@ -150,7 +151,7 @@ Right-click the **tray icon** for quick toggles: hide, display, party mode, desk
 ### Customise
 - **Shape:** *Notch* (attached to the top edge) or *Island* (floating, can go anywhere on screen).
 - **Layout:** *Tabs* (one section at a time in a wide panel) or *Stacked* (Settings → General): every section at once in a tall column, with music, clock and weather, your apps, the shelf, the focus timer, system stats with volume and brightness sliders, and the latest notifications. Click a section's title to open its full page, and ‹ to go back.
-- **Look:** Midnight, Graphite, Glass and Aurora styles, sizes S–XL, and any accent colour (or from the album art).
+- **Look:** Midnight, Graphite, Glass, Aurora and **Weather** styles (Weather tints the notch with the sky outside: warm gold when sunny, grey when cloudy, deep blue in rain, violet with lightning in a storm, icy in snow, starry on a clear night), sizes S–XL, and any accent colour (or from the album art).
 - **Visualizer colours:** follow the accent, use a preset (Rainbow, Sunset, Ocean, Neon, Fire, Aurora) or mix up to three colours of your own.
 - **Music icon effect:** Sun rays, Orb or Off.
 

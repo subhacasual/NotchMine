@@ -146,6 +146,39 @@ function wxIcon(code, day) {
   if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return 'wxRain';
   return 'wxCloud';
 }
+// WMO weather code → the "mood" that colours the Weather theme, the weather card and the pill effects
+function weatherMood(w = S.weather) {
+  if (!w) return '';
+  const c = w.code, day = w.isDay !== false;
+  if (c === 0 || c === 1) return day ? 'sunny' : 'night';
+  if (c === 2) return day ? 'partly' : 'night-cloudy';
+  if (c === 45 || c === 48) return 'fog';
+  if (c >= 95) return 'storm';
+  if ((c >= 71 && c <= 77) || c === 85 || c === 86) return 'snow';
+  if (c >= 51 && c <= 57) return 'drizzle';
+  if (c === 65 || c === 67 || c === 82) return 'heavy';
+  if ((c >= 61 && c <= 66) || c === 80 || c === 81) return 'rain';
+  return day ? 'cloudy' : 'night-cloudy';
+}
+// what falls from the sky right now: kind 'rain' | 'snow' | '', amount 0..1, and whether there's lightning
+function wxPrecip(w = S.weather) {
+  if (!w) return { kind: '', amt: 0, storm: false };
+  const c = w.code;
+  if (c >= 95) return { kind: 'rain', amt: 1, storm: true };
+  if ((c >= 71 && c <= 77) || c === 85 || c === 86) return { kind: 'snow', amt: c === 75 || c === 86 ? 1 : c === 71 || c === 77 ? 0.45 : 0.7, storm: false };
+  if (c >= 51 && c <= 57) return { kind: 'rain', amt: c === 51 ? 0.22 : c === 55 || c === 57 ? 0.4 : 0.3, storm: false };
+  if (c === 65 || c === 67 || c === 82) return { kind: 'rain', amt: 1, storm: false };
+  if (c === 61 || c === 80) return { kind: 'rain', amt: 0.55, storm: false };
+  if ((c >= 62 && c <= 66) || c === 81) return { kind: 'rain', amt: 0.75, storm: false };
+  return { kind: '', amt: 0, storm: false };
+}
+// publish the mood on <html> so CSS (Weather theme, card scenes) and the effects engine all agree
+function applyWeatherMood() {
+  const root = document.documentElement, mood = weatherMood();
+  root.dataset.wx = mood;
+  root.dataset.wxNight = S.weather && S.weather.isDay === false ? '1' : '';
+  if (typeof wxfxEnsure === 'function') wxfxEnsure();
+}
 function shortRate(b) {
   if (b < 1024) return `${Math.round(b)} B/s`;
   if (b < 1048576) return `${Math.round(b / 1024)} KB/s`;
@@ -193,6 +226,7 @@ function applySize() {
   island.classList.toggle('ghost', isGhost());
   applySideFade();
   if (typeof sparkEnsure === 'function') sparkEnsure();   // sun / orb stop while faded, come back on hover
+  if (typeof wxfxEnsure === 'function') wxfxEnsure();     // rain / snow on the pill: same rules
   island.style.width = w + 'px';
   island.style.height = h + 'px';
   if (S.side) {
@@ -367,6 +401,7 @@ function setTab(tab) {
   if (typeof onTabShown === 'function') onTabShown(tab);
   if (tab === 'overview' && typeof renderOverview === 'function') renderOverview(true);
   if (S.mode === 'expanded') applySize();          // overview <-> a full page changes the panel's shape
+  if (typeof wxfxEnsure === 'function') wxfxEnsure();    // the weather card's scene runs only while it's on screen
 }
 document.querySelectorAll('.tab-btn').forEach(b => {
   b.addEventListener('click', () => setTab(b.dataset.tab));
@@ -450,10 +485,11 @@ function renderCompact() {
   const ind = (typeof indicatorsHTML === 'function') ? indicatorsHTML() : '';
   const night = isNight();
   const wx = S.weather ? wxIcon(S.weather.code, S.weather.isDay !== false) : '';
+  const mood = weatherMood(), overcast = !!mood && !['sunny', 'partly', 'night'].includes(mood);   // sun / moon hidden by clouds
   const showDate = idleCfg().date;
   const nm = st.includes('net') ? netMode() : '', bm = st.includes('battery') ? battMode() : '';
   const unread = typeof ALERTS !== 'undefined' ? ALERTS.unread : 0;
-  const key = `${left}|${center}|${right}|${st.join()}|${night}|${wx}|${showDate}|${nm}|${bm}|${unread}|${playing ? S.media.title + S.media.thumbId : ''}|${ind}|${gm ? gm.exe + (gm.icon ? 1 : 0) + (gm.poster ? 1 : 0) : ''}`;
+  const key = `${left}|${center}|${right}|${st.join()}|${night}|${wx}|${overcast}|${showDate}|${nm}|${bm}|${unread}|${playing ? S.media.title + S.media.thumbId : ''}|${ind}|${gm ? gm.exe + (gm.icon ? 1 : 0) + (gm.poster ? 1 : 0) : ''}`;
 
   if (key !== compactKey) {
     compactKey = key;
@@ -462,7 +498,7 @@ function renderCompact() {
       ? `<span class="c-game${gm.poster ? ' has-poster' : ''}" title="${esc(gm.name)}">${gameArtHTML(gm)}</span><span class="c-time c-gtime" id="cGameTime" title="Time played"></span>`
       : left === 'art'
       ? `<div class="c-art-wrap"><div class="c-art" id="cArt" style="${m.thumb ? `background-image:url('${m.thumb}')` : ''}">${m.thumb ? '' : icon('music')}</div></div><span class="c-time" id="cTime"></span>`
-      : `<span class="c-sky ${night ? 'night' : 'day'}" title="${night ? 'Night' : 'Day'}">${icon(night ? 'skyMoon' : 'skySun')}</span><span class="c-time" id="cTime"></span>${showDate ? '<span class="c-dsep"></span><span class="c-dt" id="cDt"></span>' : ''}`;
+      : `<span class="c-sky ${night ? 'night' : 'day'}${overcast ? ' overcast' : ''}" title="${night ? 'Night' : 'Day'}${overcast && S.weather.text ? ' · ' + esc(S.weather.text) : ''}">${icon(night ? 'skyMoon' : 'skySun')}</span><span class="c-time" id="cTime"></span>${showDate ? '<span class="c-dsep"></span><span class="c-dt" id="cDt"></span>' : ''}`;
     $('cCenter').innerHTML = center === 'title'
       ? `<div class="c-title-wrap"><span class="c-title" id="cTitle">${esc(m.title)}${m.artist ? ' · ' + esc(m.artist) : ''}</span></div><div class="c-lyric" id="cLyric"></div>`
       : '';
@@ -818,9 +854,11 @@ function renderWeather(data) {
   const c = data.current, d = data.daily;
   const w = wmo(c.weather_code, c.is_day === 1);
   S.weather = { temp: Math.round(c.temperature_2m), code: c.weather_code, isDay: c.is_day === 1, text: w.text };   // for the idle pill + overview
+  applyWeatherMood();
   if (typeof renderCompact === 'function') renderCompact();
   $('weatherCard').classList.toggle('night', c.is_day !== 1);
-  $('wxIcon').textContent = w.emoji;
+  $('wxIcon').innerHTML = icon(wxIcon(c.weather_code, c.is_day === 1));
+  $('wxIcon').title = w.text;
   $('wxTemp').textContent = `${Math.round(c.temperature_2m)}°`;
   $('wxCond').textContent = `${w.text} · feels ${Math.round(c.apparent_temperature)}°`;
   $('wxHum').textContent = `${Math.round(c.relative_humidity_2m)}%`;
@@ -829,10 +867,19 @@ function renderWeather(data) {
   let html = '';
   for (let i = 1; i < Math.min(5, d.time.length); i++) {
     const day = new Date(d.time[i] + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short' });
-    html += `<div><span class="d">${day}</span><span class="e">${wmo(d.weather_code[i]).emoji}</span>` +
+    html += `<div><span class="d">${day}</span><span class="e" title="${esc(wmo(d.weather_code[i]).text)}">${icon(wxIcon(d.weather_code[i], true))}</span>` +
       `<span class="r">${Math.round(d.temperature_2m_max[i])}° <span>${Math.round(d.temperature_2m_min[i])}°</span></span></div>`;
   }
   $('wxDays').innerHTML = html;
+}
+// self-test / preview: show any weather without waiting for it (nothing is cached; the next fetch replaces it)
+function previewWeather(code, isDay = true, temp = 24) {
+  const today = new Date();
+  const days = Array.from({ length: 5 }, (_, i) => new Date(today.getTime() + i * 86400000).toISOString().slice(0, 10));
+  renderWeather({
+    current: { temperature_2m: temp, apparent_temperature: temp + 1, relative_humidity_2m: 78, weather_code: code, is_day: isDay ? 1 : 0, wind_speed_10m: 14 },
+    daily: { time: days, weather_code: [code, 2, 63, 0, 3], temperature_2m_max: [temp + 3, 29, 25, 31, 27], temperature_2m_min: [temp - 4, 21, 19, 22, 20] },
+  });
 }
 function loadCachedWeather() {
   try {
@@ -1037,6 +1084,11 @@ function renderVolume() {
   if (!volDragging) { $('volSlider').value = v.muted ? 0 : pct; setRangeFill($('volSlider')); }
   $('volVal').textContent = v.muted ? 'Muted' : pct + '%';
   $('muteBtn').innerHTML = icon(v.muted || pct === 0 ? 'mute' : pct < 50 ? 'volumeLow' : 'volume');
+  // Home → music card's small volume slider
+  if (!volDragging) { $('mcVol').value = v.muted ? 0 : pct; setRangeFill($('mcVol')); }
+  $('mcVolVal').textContent = v.muted ? 'Muted' : pct + '%';
+  $('mcMute').innerHTML = icon(v.muted || pct === 0 ? 'mute' : pct < 50 ? 'volumeLow' : 'volume');
+  $('mcMute').title = v.muted ? 'Unmute' : 'Mute';
   if (typeof renderOverview === 'function') renderOverview();
 }
 $('volSlider').addEventListener('input', e => {
@@ -1049,6 +1101,28 @@ $('volSlider').addEventListener('input', e => {
 });
 $('volSlider').addEventListener('change', () => { volDragging = false; });
 $('muteBtn').addEventListener('click', () => { ownVolUntil = Date.now() + 1200; api.toggleMute(); });
+// the same, right in the music card on Home (no trip to the System tab)
+$('mcVol').addEventListener('input', e => {
+  volDragging = true;
+  setRangeFill(e.target);
+  $('mcVolVal').textContent = e.target.value + '%';
+  ownVolUntil = Date.now() + 1200;                  // no volume pop-up for our own change
+  clearTimeout(volSendTimer);
+  volSendTimer = setTimeout(() => api.setVolume(e.target.value / 100), 40);
+});
+$('mcVol').addEventListener('change', () => { volDragging = false; });
+$('mcMute').addEventListener('click', () => { ownVolUntil = Date.now() + 1200; api.toggleMute(); });
+// scroll over the slider row: 2% a notch
+$('mcVolRow').addEventListener('wheel', e => {
+  if (!S.volume || !e.deltaY) return;
+  e.preventDefault();
+  const cur = S.volume.muted ? 0 : Math.round(S.volume.level * 100);
+  const nv = clamp(cur + (e.deltaY < 0 ? 2 : -2), 0, 100);
+  ownVolUntil = Date.now() + 1200;
+  S.volume = { ...S.volume, level: nv / 100, muted: false };
+  renderVolume();
+  api.setVolume(nv / 100);
+}, { passive: false });
 
 // Scroll on the collapsed notch to change volume
 let lastWheelAt = -1000, lastSwipeAt = -1000, swipeAcc = 0, swipeReset = 0;

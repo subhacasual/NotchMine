@@ -4,7 +4,7 @@
 // test hook used by the snapshot self-test (NOTCH_SNAP=<dir>)
 window.__notchDebug = {
   S, T, ALERTS, NET, VIZ, expand, collapse, setTab, setMode, peekTrack, peekVolume, peekNotif,
-  onMedia, tmSet, tmStart, renderSys, addNotif, patchSettings,
+  onMedia, tmSet, tmStart, renderSys, addNotif, patchSettings, previewWeather, wxPrecip, weatherMood,
 };
 
 (async function boot() {

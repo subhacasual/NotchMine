@@ -14,6 +14,8 @@
     <div class="ear l"></div>
     <div class="ear r"></div>
     <div id="notch">
+      <!-- rain / snow across the idle pill (weatherfx.js) -->
+      <canvas class="wxfx" id="wxPill"></canvas>
 
       <!-- ============ COMPACT (collapsed) ============ -->
       <div class="layer" id="compact">
@@ -137,6 +139,11 @@
                 <button class="mc-lyr-btn" id="mcLyrBtn" title="Lyrics"><i data-icon="quote"></i></button>
               </div>
               <div class="mc-lyrics" id="mcLyrics"></div>
+              <div class="mc-vol" id="mcVolRow" title="Volume (scroll here to adjust)">
+                <button class="mc-vol-btn" id="mcMute" title="Mute"><i data-icon="volume"></i></button>
+                <input type="range" id="mcVol" min="0" max="100" value="0">
+                <b id="mcVolVal">--</b>
+              </div>
               <div class="mc-progress" id="mcProgress">
                 <span class="t" id="mcPos">0:00</span>
                 <div class="bar" id="mcBar"><div class="fill" id="mcFill"></div></div>
@@ -168,9 +175,11 @@
             </div>
 
             <div class="card weather-card" id="weatherCard" title="Weather data by Open-Meteo.com (CC BY 4.0)">
+              <div class="wx-scene" aria-hidden="true"><i class="wx-glow"></i><i class="wx-rays"></i><i class="wx-cloud a"></i><i class="wx-cloud b"></i><i class="wx-mist"></i></div>
+              <canvas class="wxfx" id="wxCard"></canvas>
               <div class="wx-loc"><i data-icon="pin2"></i><span id="wxCity">Set a city</span></div>
               <div class="wx-main">
-                <span class="wx-icon" id="wxIcon">⛅</span>
+                <span class="wx-icon" id="wxIcon"></span>
                 <span class="wx-temp" id="wxTemp">--°</span>
               </div>
               <div class="wx-cond" id="wxCond">Loading weather…</div>
@@ -485,6 +494,7 @@
                       <button data-theme="graphite"><span class="tp tp-graphite"></span>Graphite</button>
                       <button data-theme="glass"><span class="tp tp-glass"></span>Glass</button>
                       <button data-theme="aurora"><span class="tp tp-aurora"></span>Aurora</button>
+                      <button data-theme="weather" title="The notch's colours follow the weather outside: warm when sunny, blue when it rains…"><span class="tp tp-weather"></span>Weather</button>
                     </div>
                     <div class="set-row"><span>Size</span>
                       <span class="seg" data-seg="scale">
@@ -534,6 +544,7 @@
                       <input type="range" min="0" max="100" data-range="fxSensitivity" data-out="fxSensVal">
                     </div>
                     <div class="set-note" id="vizNote" hidden></div>
+                    <label class="set-row" title="When it's raining or snowing outside, it rains or snows across the pill (with or without music). While it rains, it also rains all over the open panel."><span>Rain &amp; snow animation</span><input type="checkbox" class="switch" data-setting="wxPill"></label>
                   </div>
                 </div>
 
@@ -714,6 +725,7 @@
   <script src="icons.js"></script>
   <script src="app.js"></script>
   <script src="extras.js"></script>
+  <script src="weatherfx.js"></script>
   <script src="live.js"></script>
   <script src="stack.js"></script>
   <script src="game.js"></script>

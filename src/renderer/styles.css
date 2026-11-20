@@ -213,6 +213,9 @@ i[data-icon] svg { width: 100%; height: 100%; }
 .c-sky.day .rays { transform-origin: 12px 12px; animation: skySpin 14s linear infinite; }
 .c-sky.night { color: #eef0ff; filter: drop-shadow(0 0 4px rgba(190, 200, 255, .8)) drop-shadow(0 0 10px rgba(140, 150, 255, .35)); animation: moonGlow 4s ease-in-out infinite; }
 @keyframes skySpin { to { transform: rotate(360deg); } }
+/* clouds, rain, snow, fog: the sun / moon dims behind them (the weather chip shows what's going on) */
+.c-sky.overcast { color: #a9b1c2; filter: none; animation: none; opacity: .7; }
+.c-sky.overcast .rays { animation: none; opacity: .55; }
 @keyframes moonGlow { 50% { filter: drop-shadow(0 0 2px rgba(190, 200, 255, .55)) drop-shadow(0 0 6px rgba(140, 150, 255, .2)); } }
 .c-left { gap: 6px; }
 /* idle pill: live info as icon + value */
@@ -473,6 +476,18 @@ i[data-icon] svg { width: 100%; height: 100%; }
 .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: #fff; }
 .bar.noseek { cursor: default; }
 .mc-controls { display: flex; justify-content: center; align-items: center; gap: 22px; }
+/* small volume slider in the music card */
+.mc-vol { position: relative; z-index: 1; display: flex; align-items: center; gap: 7px; font-size: 11px; font-variant-numeric: tabular-nums; }
+.mc-vol-btn { width: 22px; height: 22px; flex: none; display: grid; place-items: center; border-radius: 50%; margin-left: -4px; color: rgba(255,255,255,.85); transition: background .2s, transform .15s; }
+.mc-vol-btn:hover { background: rgba(255,255,255,.12); }
+.mc-vol-btn:active { transform: scale(.9); }
+.mc-vol-btn i, .mc-vol-btn svg { width: 15px; height: 15px; }
+.mc-vol input[type=range] { flex: 1; min-width: 0; height: 5px; border-radius: 3px; transition: height .15s;
+  background: linear-gradient(90deg, rgb(var(--accent)) var(--p, 0%), rgba(255,255,255,.15) var(--p, 0%)); }
+.mc-vol:hover input[type=range] { height: 8px; border-radius: 4px; }
+.mc-vol input[type=range]::-webkit-slider-thumb { height: 8px; }
+.mc-vol b { min-width: 34px; text-align: right; font-weight: 600; color: var(--muted); }
+.media-card.show-lyrics .mc-vol { display: none; }
 .ctl { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; transition: background .2s, transform .15s; }
 .ctl i { width: 20px; height: 20px; }
 .ctl:hover { background: rgba(255,255,255,.1); }
@@ -1222,3 +1237,168 @@ body.viz-live .eq.live.playing i { animation: none; transition: height 0.07s lin
 .set-note kbd { font: inherit; font-size: 10.5px; padding: 0 3px; border-radius: 3px; background: rgba(255,255,255,.1); }
 :root[data-layout="stacked"] .gm-stats .stat-card { height: 78px; }
 :root[data-game="1"] .hdr-stats { display: none; }   /* the Game page shows these; the header needs the room for the Game tab */
+
+/* ================================================================ weather (weatherfx.js + the "Weather" theme)
+   <html data-wx="sunny|partly|cloudy|night|night-cloudy|fog|drizzle|rain|heavy|storm|snow"> is set from the
+   current weather. The Weather theme colours the notch from it; the card scenes and icons work in every theme. */
+
+/* rain / snow canvases: the pill's sits under the pill content, the card's under the card text */
+.wxfx { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; opacity: 0; transition: opacity .6s var(--smooth); }
+.wxfx.on { opacity: 1; }
+#island.ghost .wxfx, :root[data-side-fade="1"] #wxPill { opacity: 0; transition: none; }
+
+/* ---- Weather theme: three colours that glide to the new weather's over a few seconds */
+@property --wx1 { syntax: '<color>'; inherits: true; initial-value: rgb(10, 132, 255); }
+@property --wx2 { syntax: '<color>'; inherits: true; initial-value: rgb(48, 208, 192); }
+@property --wx3 { syntax: '<color>'; inherits: true; initial-value: rgb(94, 92, 230); }
+@property --wx-op { syntax: '<number>'; inherits: true; initial-value: .45; }
+:root { --wx1: rgb(10, 132, 255); --wx2: rgb(48, 208, 192); --wx3: rgb(94, 92, 230); --wx-op: .45;
+  transition: --wx1 3s ease, --wx2 3s ease, --wx3 3s ease, --wx-op 3s ease; }
+:root[data-wx="sunny"]        { --wx1: rgb(255, 170, 50);  --wx2: rgb(255, 110, 30);  --wx3: rgb(255, 214, 10);  --wx-op: .62; }
+:root[data-wx="partly"]       { --wx1: rgb(255, 180, 70);  --wx2: rgb(140, 160, 195); --wx3: rgb(255, 214, 90);  --wx-op: .5; }
+:root[data-wx="cloudy"]       { --wx1: rgb(140, 158, 190); --wx2: rgb(100, 116, 148); --wx3: rgb(190, 200, 222); --wx-op: .42; }
+:root[data-wx="night"]        { --wx1: rgb(94, 92, 230);   --wx2: rgb(40, 52, 150);   --wx3: rgb(150, 140, 255); --wx-op: .55; }
+:root[data-wx="night-cloudy"] { --wx1: rgb(80, 86, 150);   --wx2: rgb(60, 66, 110);   --wx3: rgb(120, 126, 180); --wx-op: .42; }
+:root[data-wx="fog"]          { --wx1: rgb(175, 180, 190); --wx2: rgb(125, 130, 142); --wx3: rgb(205, 208, 215); --wx-op: .36; }
+:root[data-wx="drizzle"]      { --wx1: rgb(64, 156, 255);  --wx2: rgb(40, 120, 165);  --wx3: rgb(100, 200, 225); --wx-op: .48; }
+:root[data-wx="rain"]         { --wx1: rgb(30, 120, 255);  --wx2: rgb(20, 90, 175);   --wx3: rgb(64, 200, 225);  --wx-op: .56; }
+:root[data-wx="heavy"]        { --wx1: rgb(20, 80, 225);   --wx2: rgb(30, 60, 145);   --wx3: rgb(48, 170, 215);  --wx-op: .62; }
+:root[data-wx="storm"]        { --wx1: rgb(100, 72, 230);  --wx2: rgb(40, 40, 125);   --wx3: rgb(130, 110, 255); --wx-op: .6; }
+:root[data-wx="snow"]         { --wx1: rgb(200, 225, 255); --wx2: rgb(140, 180, 232); --wx3: rgb(240, 248, 255); --wx-op: .42; }
+
+:root[data-theme="weather"] #notch::before {
+  content: ""; position: absolute; left: -10%; right: -10%; bottom: 0; height: 100%; pointer-events: none;
+  background:
+    radial-gradient(45% 75% at 22% 100%, var(--wx1), transparent 70%),
+    radial-gradient(40% 70% at 78% 100%, var(--wx2), transparent 70%),
+    radial-gradient(35% 60% at 50% 100%, var(--wx3), transparent 72%);
+  filter: blur(14px); opacity: var(--wx-op);
+  animation: aurora 14s ease-in-out infinite alternate;
+}
+:root[data-theme="weather"][data-wx="sunny"] #notch::before, :root[data-theme="weather"][data-wx="partly"] #notch::before { animation: wxBreathe 6s ease-in-out infinite; }
+:root[data-theme="weather"][data-wx="cloudy"] #notch::before, :root[data-theme="weather"][data-wx="fog"] #notch::before,
+:root[data-theme="weather"][data-wx="night-cloudy"] #notch::before { animation-duration: 24s; }
+:root[data-theme="weather"][data-wx="heavy"] #notch::before, :root[data-theme="weather"][data-wx="storm"] #notch::before { animation-duration: 8s; }
+:root[data-theme="weather"] #island[data-mode="collapsed"] #notch::before { opacity: min(1, calc(var(--wx-op) * 1.45)); filter: blur(10px); }
+:root[data-theme="weather"] #island[data-mode="expanded"] #notch::before { opacity: calc(var(--wx-op) * .9); filter: blur(28px); }
+:root[data-theme="weather"][data-side-fade="1"] #island #notch::before { opacity: calc(.6 * var(--side-bg-op, .05)); }
+@keyframes wxBreathe { 0%, 100% { scale: 1 1; translate: -3% 0; } 50% { scale: 1.08 1.25; translate: 3% 0; } }
+
+/* details on top of the glow: stars on a clear night, drifting mist in fog, lightning in a storm */
+:root[data-theme="weather"][data-wx="night"] #notch::after, :root[data-theme="weather"][data-wx="fog"] #notch::after,
+:root[data-theme="weather"][data-wx="storm"] #notch::after { content: ""; position: absolute; inset: 0; pointer-events: none; }
+:root[data-theme="weather"][data-wx="night"] #notch::after {
+  background:
+    radial-gradient(1px 1px at 8% 30%, #fff, transparent), radial-gradient(1px 1px at 19% 72%, #fff, transparent),
+    radial-gradient(1.2px 1.2px at 33% 22%, #fff, transparent), radial-gradient(1px 1px at 47% 64%, #fff, transparent),
+    radial-gradient(1px 1px at 61% 18%, #fff, transparent), radial-gradient(1.2px 1.2px at 74% 58%, #fff, transparent),
+    radial-gradient(1px 1px at 86% 26%, #fff, transparent), radial-gradient(1px 1px at 94% 70%, #fff, transparent);
+  opacity: .5; animation: wxTwinkle 5s ease-in-out infinite alternate;
+}
+:root[data-theme="weather"][data-wx="fog"] #notch::after {
+  left: -50%; width: 200%;
+  background: repeating-linear-gradient(180deg, transparent 0 7px, rgba(215, 220, 230, .14) 7px 12px);
+  filter: blur(2.5px); animation: wxMist 18s ease-in-out infinite alternate;
+}
+:root[data-theme="weather"][data-wx="storm"] #notch::after { background: rgb(220, 214, 255); opacity: 0; animation: wxFlash 4.5s linear infinite; }
+:root[data-theme="weather"][data-wx="storm"] #island.wx-fx #notch::after { animation: none; }   /* the pill's rain draws its own lightning */
+:root[data-theme="weather"][data-wx="storm"] #island[data-mode="expanded"] #notch::after { animation-name: wxFlashSoft; }
+#island.ghost #notch::after, :root[data-side-fade="1"] #notch::after { display: none; }
+@keyframes wxTwinkle { 0% { opacity: .25; } 50% { opacity: .65; } 100% { opacity: .4; } }
+@keyframes wxMist { to { transform: translateX(22%); } }
+@keyframes wxFlash { 0%, 90% { opacity: 0; } 91% { opacity: .3; } 92.5% { opacity: .04; } 94% { opacity: .26; } 97%, 100% { opacity: 0; } }
+@keyframes wxFlashSoft { 0%, 90% { opacity: 0; } 91% { opacity: .1; } 92.5% { opacity: .02; } 94% { opacity: .08; } 97%, 100% { opacity: 0; } }
+.tp-weather {
+  background:
+    repeating-linear-gradient(105deg, transparent 0 5px, rgba(170, 208, 255, .35) 5px 6px),
+    radial-gradient(55% 130% at 25% 100%, #ffb340, transparent 70%),
+    radial-gradient(55% 130% at 80% 100%, #1e78ff, transparent 70%), #000;
+}
+.themes { grid-template-columns: repeat(5, 1fr); }
+.tp { width: min(52px, 100%); }
+
+/* ---- the Home weather card: a live scene behind the text */
+.weather-card > * { position: relative; z-index: 1; }
+.weather-card > .wx-scene, .weather-card > .wxfx { position: absolute; inset: 0; z-index: 0; }
+.wx-scene { pointer-events: none; overflow: hidden; border-radius: inherit; }
+.wx-scene i { position: absolute; display: none; }
+.wx-glow { right: -38px; top: -38px; width: 140px; height: 140px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 214, 10, .5), rgba(255, 159, 10, .16) 45%, transparent 70%); animation: wxSunPulse 6s ease-in-out infinite; }
+.wx-rays { right: -102px; top: -102px; width: 268px; height: 268px; border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg, rgba(255, 222, 130, .15) 0 5deg, transparent 5deg 16deg);
+  -webkit-mask: radial-gradient(circle, #000 18%, transparent 64%); mask: radial-gradient(circle, #000 18%, transparent 64%);
+  animation: skySpin 50s linear infinite; }
+.wx-cloud { width: 180px; height: 70px; filter: blur(3px); --cl: 225, 232, 245; --ca: .2;
+  background:
+    radial-gradient(30% 45% at 28% 62%, rgba(var(--cl), var(--ca)), transparent 100%),
+    radial-gradient(28% 58% at 52% 44%, rgba(var(--cl), calc(var(--ca) * 1.25)), transparent 100%),
+    radial-gradient(30% 42% at 76% 64%, rgba(var(--cl), var(--ca)), transparent 100%);
+  animation: wxCloudDrift 20s ease-in-out infinite alternate; }
+.wx-cloud.a { top: -8px; left: 20%; }
+.wx-cloud.b { top: 26px; left: -14%; transform: scale(.8); animation-duration: 27s; animation-direction: alternate-reverse; --ca: .14; }
+.wx-mist { left: -50%; top: 0; width: 200%; height: 100%;
+  background: repeating-linear-gradient(180deg, transparent 0 16px, rgba(212, 216, 226, .11) 16px 26px);
+  filter: blur(4px); animation: wxMist 16s ease-in-out infinite alternate; }
+@keyframes wxSunPulse { 50% { transform: scale(1.12); opacity: .8; } }
+@keyframes wxCloudDrift { from { translate: -24px 0; } to { translate: 46px 0; } }
+
+/* which pieces each weather uses */
+:root[data-wx="sunny"] .wx-glow, :root[data-wx="sunny"] .wx-rays, :root[data-wx="partly"] .wx-glow,
+:root[data-wx="night"] .wx-glow, :root[data-wx="night-cloudy"] .wx-glow,
+:root[data-wx="partly"] .wx-cloud.a, :root[data-wx="cloudy"] .wx-cloud, :root[data-wx="night-cloudy"] .wx-cloud,
+:root[data-wx="fog"] .wx-mist, :root[data-wx="fog"] .wx-cloud.b,
+:root:is([data-wx="drizzle"], [data-wx="rain"], [data-wx="heavy"], [data-wx="storm"], [data-wx="snow"]) .wx-cloud { display: block; }
+:root:is([data-wx="night"], [data-wx="night-cloudy"]) .wx-glow { width: 110px; height: 110px; right: -28px; top: -28px;
+  background: radial-gradient(circle, rgba(200, 205, 255, .32), rgba(120, 120, 255, .1) 45%, transparent 70%); }
+:root[data-wx="night-cloudy"] .wx-glow { opacity: .6; }
+:root:is([data-wx="drizzle"], [data-wx="rain"]) .wx-cloud { --cl: 160, 172, 195; --ca: .22; }
+:root:is([data-wx="heavy"], [data-wx="storm"]) .wx-cloud { --cl: 110, 118, 140; --ca: .3; }
+:root[data-wx="snow"] .wx-cloud { --cl: 225, 235, 250; --ca: .2; }
+
+/* card colours */
+:root[data-wx="sunny"] .weather-card        { background: linear-gradient(160deg, rgba(255, 159, 10, .3), rgba(255, 214, 10, .08) 45%, rgba(255, 255, 255, .04) 75%); }
+:root[data-wx="partly"] .weather-card       { background: linear-gradient(160deg, rgba(255, 179, 64, .22), rgba(150, 165, 190, .12) 55%, rgba(255, 255, 255, .04)); }
+:root[data-wx="cloudy"] .weather-card       { background: linear-gradient(160deg, rgba(150, 165, 190, .26), rgba(255, 255, 255, .05) 70%); }
+:root[data-wx="night"] .weather-card        { background: linear-gradient(160deg, rgba(60, 58, 170, .38), rgba(20, 22, 60, .25) 60%, rgba(255, 255, 255, .03)); }
+:root[data-wx="night-cloudy"] .weather-card { background: linear-gradient(160deg, rgba(80, 86, 140, .32), rgba(255, 255, 255, .04) 70%); }
+:root[data-wx="fog"] .weather-card          { background: linear-gradient(180deg, rgba(190, 195, 205, .22), rgba(255, 255, 255, .05) 70%); }
+:root[data-wx="drizzle"] .weather-card      { background: linear-gradient(170deg, rgba(64, 140, 220, .26), rgba(40, 90, 140, .12) 60%, rgba(255, 255, 255, .03)); }
+:root[data-wx="rain"] .weather-card         { background: linear-gradient(170deg, rgba(30, 100, 210, .32), rgba(20, 50, 100, .2) 60%, rgba(255, 255, 255, .03)); }
+:root[data-wx="heavy"] .weather-card        { background: linear-gradient(170deg, rgba(20, 60, 160, .4), rgba(10, 25, 60, .3) 60%, rgba(255, 255, 255, .02)); }
+:root[data-wx="storm"] .weather-card        { background: linear-gradient(170deg, rgba(70, 50, 160, .42), rgba(15, 15, 45, .35) 60%, rgba(255, 255, 255, .02)); }
+:root[data-wx="snow"] .weather-card         { background: linear-gradient(170deg, rgba(200, 225, 255, .26), rgba(140, 180, 230, .12) 60%, rgba(255, 255, 255, .05)); }
+
+/* the card's own icons (were emoji) */
+.wx-icon { display: inline-grid; place-items: center; width: 36px; height: 36px; }
+.wx-icon svg { width: 36px; height: 36px; display: block; overflow: visible; filter: drop-shadow(0 0 6px rgba(255, 255, 255, .15)); }
+.wx-days .e { display: flex; justify-content: center; align-items: center; height: 21px; }
+.wx-days .e svg { width: 18px; height: 18px; display: block; }
+
+/* ---- weather icons come alive (pill chip, card, overview); the forecast row stays still */
+.cs.wx svg, .ov-wx-ic svg { overflow: visible; }
+:is(.cs.wx, .wx-icon, .ov-wx-ic) :is(.wa-rays, .wa-cloud, .wa-drop, .wa-flake, .wa-fog, .wa-bolt) { transform-box: fill-box; transform-origin: center; }
+:is(.cs.wx, .wx-icon, .ov-wx-ic) .wa-rays { animation: skySpin 16s linear infinite; }
+:is(.cs.wx, .wx-icon, .ov-wx-ic) .wa-sun { animation: wxIconGlow 3.2s ease-in-out infinite; }
+:is(.cs.wx, .wx-icon, .ov-wx-ic) .wa-moon { animation: wxMoonGlow 4s ease-in-out infinite; }
+:is(.cs.wx, .wx-icon, .ov-wx-ic) .wa-cloud { animation: wxIconDrift 4s ease-in-out infinite alternate; }
+:is(.cs.wx, .wx-icon, .ov-wx-ic) .wa-drop { animation: wxIconDrop 1.05s linear infinite; }
+:is(.cs.wx, .wx-icon, .ov-wx-ic) .wa-drop:nth-of-type(2) { animation-delay: -.35s; }
+:is(.cs.wx, .wx-icon, .ov-wx-ic) .wa-drop:nth-of-type(3) { animation-delay: -.7s; }
+:is(.cs.wx, .wx-icon, .ov-wx-ic) .wa-flake { animation: wxIconFlake 2.4s linear infinite; }
+:is(.cs.wx, .wx-icon, .ov-wx-ic) .wa-flake:nth-of-type(2) { animation-delay: -.8s; }
+:is(.cs.wx, .wx-icon, .ov-wx-ic) .wa-flake:nth-of-type(3) { animation-delay: -1.6s; }
+:is(.cs.wx, .wx-icon, .ov-wx-ic) .wa-fog { animation: wxIconFog 3.6s ease-in-out infinite alternate; }
+:is(.cs.wx, .wx-icon, .ov-wx-ic) .wa-fog:nth-of-type(even) { animation-direction: alternate-reverse; }
+:is(.cs.wx, .wx-icon, .ov-wx-ic) .wa-bolt { animation: wxIconBolt 3.4s linear infinite; }
+@keyframes wxIconGlow { 50% { filter: drop-shadow(0 0 2.5px rgba(255, 200, 40, .9)); } }
+@keyframes wxMoonGlow { 50% { filter: drop-shadow(0 0 2.5px rgba(200, 205, 255, .85)); } }
+@keyframes wxIconDrift { from { translate: -.7px 0; } to { translate: .9px 0; } }
+@keyframes wxIconDrop { 0% { translate: .5px -2.6px; opacity: 0; } 25% { opacity: 1; } 100% { translate: -.6px 2.4px; opacity: 0; } }
+@keyframes wxIconFlake { 0% { translate: 0 -2.4px; opacity: 0; } 25% { opacity: 1; } 100% { translate: .6px 2.6px; opacity: 0; } }
+@keyframes wxIconFog { from { translate: -1.4px 0; } to { translate: 1.4px 0; } }
+@keyframes wxIconBolt { 0%, 78%, 100% { opacity: 1; } 80% { opacity: .2; } 82% { opacity: 1; } 85% { opacity: .35; } 88% { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="weather"] #notch::before, :root[data-theme="weather"] #notch::after, .wx-scene i,
+  :is(.cs.wx, .wx-icon, .ov-wx-ic) svg * { animation: none !important; }
+}

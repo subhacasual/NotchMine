@@ -33,7 +33,8 @@ const DEFAULTS = {
   launchAtLogin: false,
   clipboardHistory: true,
   fullscreenMode: 'dim',   // a full-screen app (movie, game) on the notch's screen: 'show' | 'dim' (thin + see-through until hovered) | 'hide'
-  theme: 'midnight',        // midnight | graphite | glass | aurora
+  theme: 'midnight',        // midnight | graphite | glass | aurora | weather (colours follow the weather outside)
+  wxPill: true,             // rain / snow across the pill (idle or playing music); rain also all over the open panel
   accentMode: 'auto',       // auto (album art) | purple | blue | teal | green | orange | pink | red
   scale: 1,                 // 0.9 | 1 | 1.15 | 1.3
   openDelay: 140,           // ms of hover before the notch opens
@@ -1417,6 +1418,16 @@ async function runSnapshots(dir) {
     ['idle2-settings', `__notchDebug.patchSettings({ idleMinimal: false }); __notchDebug.S.pinned = true; __notchDebug.expand('settings'); document.querySelector('#setNav [data-sec=widgets]').click()`],
     ['idle-day', `__notchDebug.S.weather = { temp: 31, code: 2, isDay: true }; renderCompact()`],
     ['idle-rain-hot', `__notchDebug.S.weather = { temp: 26, code: 63, isDay: true }; __notchDebug.S.sys = { ...__notchDebug.S.sys, cpu: 93 }; renderCompact()`],
+    // weather looks (Weather theme): pill + the Home card for each kind of sky
+    ...[['sunny', 0, 1], ['partly', 2, 1], ['cloudy', 3, 1], ['night', 0, 0], ['fog', 45, 1], ['drizzle', 51, 1], ['rain', 63, 1], ['heavy', 65, 1], ['storm', 95, 1], ['snow', 73, 1]].flatMap(([n, code, day]) => [
+      [`wx-${n}-pill`, `__notchDebug.onMedia({ type: 'media', active: false }); __notchDebug.patchSettings({ theme: 'weather', idleMinimal: false }); __notchDebug.S.pinned = false; __notchDebug.collapse(); __notchDebug.previewWeather(${code}, ${!!day}); new Promise(r => setTimeout(r, ${n === 'storm' ? 1800 : 1200}))`],
+      ...(n === 'rain' ? [['wx-rain-music', `__notchDebug.onMedia({ type: 'media', active: true, app: 'Spotify.exe', title: 'Neon Skyline', artist: 'Demo Artist', status: 'Playing', position: 62, duration: 244, updatedAt: Date.now(), canPrev: true, canNext: true, canSeek: true, thumbId: 6, thumb: null }); new Promise(r => setTimeout(r, 1200))`], ['wx-rain-music2', `new Promise(r => setTimeout(r, 4500))`]] : []),
+      [`wx-${n}-card`, `__notchDebug.S.pinned = true; __notchDebug.expand('home'); new Promise(r => setTimeout(r, 1400))`],
+      ...(n === 'rain' ? [['wx-rain-panel', `__notchDebug.setTab('system'); new Promise(r => setTimeout(r, 900))`]] : []),
+    ]),
+    ['home-volume', `__notchDebug.patchSettings({ theme: 'midnight' }); __notchDebug.S.volume = { level: 0.42, muted: false }; renderVolume(); __notchDebug.S.pinned = true; __notchDebug.expand('home'); __notchDebug.onMedia({ type: 'media', active: true, app: 'Spotify.exe', title: 'Neon Skyline', artist: 'Demo Artist', status: 'Playing', position: 62, duration: 244, updatedAt: Date.now(), canPrev: true, canNext: true, canSeek: true, thumbId: 7, thumb: null }); new Promise(r => setTimeout(r, 1200))`],
+    ['wx-settings', `__notchDebug.S.pinned = true; __notchDebug.expand(); __notchDebug.setTab('settings'); document.querySelector('#setNav [data-sec=look]').click(); new Promise(r => setTimeout(r, 600))`],
+    ['wx-reset', `__notchDebug.patchSettings({ theme: 'midnight' }); __notchDebug.S.pinned = false; __notchDebug.collapse()`],
     ['header-stats', `__notchDebug.S.pinned = true; __notchDebug.expand('home')`],
     ['settings-widgets2', `__notchDebug.setTab('settings'); document.querySelector('#setNav [data-sec=widgets]').click()`],
     ['settings-side', `document.querySelector('#setNav [data-sec=side]').click()`],
