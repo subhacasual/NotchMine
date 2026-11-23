@@ -23,6 +23,7 @@ Windows 10 / 11 · Electron · Free and open source (MIT)
 - 📊 **Desktop equalizer:** see-through, click-through bars that dance along the bottom of your screen while you work.
 - 🎬 **Stays out of your movies:** when a video, movie or game goes full screen on the notch's screen, the notch fades to a faint thin line and comes back the moment you hover it. Prefer it gone completely, or always shown? Settings → General → **Full-screen apps** (*Show*, *Fade* or *Hide*).
 - 🧭 **Side mode:** when a chosen app (e.g. Chrome) is maximized, the notch moves to the right edge and turns vertical, so it never covers your tabs. While your mouse is away it turns see-through, and it comes straight back when you touch it.
+- 🔎 **Search from the notch:** press <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Space</kbd> and the notch grows into a search bar for apps, files, maths, unit conversion, clipboard history, commands and the web. With the free [Everything](https://www.voidtools.com) installed, files on every drive show up as you type.
 - 🎨 **Make it yours:** Notch or Island shape, four styles, four sizes, any accent colour, visualizer palettes (presets or your own mix), and drag it anywhere on any monitor.
 
 ## Screenshots
@@ -49,10 +50,17 @@ Windows 10 / 11 · Electron · Free and open source (MIT)
 
 ## Install
 
-### Option 1: download (easiest)
-1. Go to the [**Releases**](../../releases) page and download the latest `NotchMine x.y.z.exe` (portable, nothing to install).
-2. Run it. The notch appears at the top of your screen and an icon appears in the system tray.
-3. NotchMine starts with Windows automatically. To turn that off, use Settings → General → **Launch at login** or the tray menu. If you use the portable `.exe`, keep it in a fixed folder, for example `C:\Apps\NotchMine`, rather than in Downloads.
+### Option 1: installer (recommended)
+1. Go to the [**Releases**](../../releases) page and download the latest `NotchMine Setup x.y.z.exe`.
+2. Run it and follow the wizard: welcome, license, install for just you or everyone, folder, then **Extras**:
+   - **Install Everything by voidtools** (on by default, bundled, about 2 MB). It makes file search instant. Windows asks for permission once, because Everything installs a small service. If it's already on your PC, Setup skips it.
+   - **Start NotchMine when Windows starts** (on by default).
+3. Click **Finish** to launch NotchMine. The notch appears at the top of your screen and an icon appears in the system tray. Setup also adds Start menu and desktop shortcuts.
+
+Uninstall from Windows Settings → Apps. Everything stays installed, because it's its own app; remove it there too if you want.
+
+### Option 1b: portable
+Download `NotchMine x.y.z.exe` instead. There's nothing to install, and it starts with Windows automatically (turn that off in Settings → General → **Launch at login** or the tray menu). Keep it in a fixed folder, for example `C:\Apps\NotchMine`, rather than in Downloads. The portable build doesn't include Everything; get it from [voidtools.com](https://www.voidtools.com/downloads/) if you want instant file search.
 
 > **"Windows protected your PC"?** The app isn't code-signed, so SmartScreen warns about it. Click **More info → Run anyway**.
 
@@ -84,6 +92,7 @@ npm run dist
 | **Double-click** the pill | Play / pause |
 | **Middle-click** the pill | Mute |
 | **Press and drag** the pill, or the open panel's top bar | Move it, including onto another monitor |
+| <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Space</kbd> | Search: apps, files, maths, the web… (change it in Settings → Search) |
 | <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>N</kbd> | Show / hide the notch |
 | <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>M</kbd> | Mute / unmute your microphone (meeting mode) |
 | <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>P</kbd> | Party mode on / off |
@@ -105,6 +114,19 @@ Right-click the **tray icon** for quick toggles: hide, display, party mode, desk
 - **Music card:** artwork, app name, seekable progress, previous/play/next, lyrics view (click a line to jump to it), and a spectrum rising from the bottom of the card. Quick buttons start party mode or the desktop equalizer.
 - **Clock and month calendar.**
 - **Weather** with a 4-day forecast for any city. The card is a live scene of the sky outside: sun rays, drifting clouds, fog, snow or stars (rain falls across the whole panel).
+
+### Search
+Press <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Space</kbd> from anywhere (Settings → Search to pick other keys) and the notch grows into a search bar.
+- **Apps:** everything in Start, including Store apps. Type part of a name, the initials (`vsc` → Visual Studio Code) or a few letters in order (`chrm` → Chrome).
+- **Files and folders:** by name, on every drive. Install the free [Everything](https://www.voidtools.com/downloads/) and results appear instantly; its search syntax works too (`ext:pdf invoice`, `*.mp4`). Without it, NotchMine uses the Windows search index plus its own list of file names on the drives the index skips (built in the background, a little slower and less complete). <kbd>Ctrl</kbd> + <kbd>Enter</kbd> shows a file in its folder, <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd> copies its path, and you can drag a result straight into another app.
+- **Maths:** `18% of 2450`, `sqrt(2)*pi`, `(4+5)^2`, `sin(30)` (in degrees). <kbd>Enter</kbd> copies the answer.
+- **Units:** `5 km to mi`, `72 f to c`, `4 GB in MiB`, or just `10 kg`. Length, weight, volume, area, speed, data, time and temperature.
+- **Commands:** party mode, desktop equalizer, mute, mic, play/pause, lock, screenshot, Bluetooth, Wi-Fi, display, Windows Update…
+- **Clipboard history**, your **launchpad** shortcuts, and **websites** (type `github.com`).
+- **Web search** at the bottom of the list, with **Google** by default (Bing, DuckDuckGo, Brave or Ecosia in Settings → Search). It opens in your default browser.
+- **Answers right in the box:** type a question (`capital of india`, `how tall is mount everest`) and, once you stop typing, the search engine's own results page appears inside the box with its answer at the top. Click a result to open it in your browser, or press <kbd>Enter</kbd> for the full page. Switch it off in Settings → Search.
+- **Learns your habits:** what you open most, and what you picked last time after typing the same letters, comes first. Before you type, it shows what you opened lately (<kbd>Del</kbd> forgets one).
+- <kbd>Tab</kbd> switches between **All**, **Apps**, **Files** and **Clipboard**. <kbd>Esc</kbd> clears, then closes.
 
 ### Apps
 - **Your own launchpad:** add websites or apps (drag `.exe`/shortcuts/links in, or use *Add*), with real icons.
@@ -143,6 +165,31 @@ Right-click the **tray icon** for quick toggles: hide, display, party mode, desk
 - **Settings:** intensity and height sliders, mirrored or left → right, and which screens.
 - Shows only while music plays and hides in full-screen apps.
 
+### Ambient screen (two or more screens)
+- **Watch a movie full screen on one screen and the others glow in its colours.** They change with every scene and jump at once on a scene cut. An equalizer moves to the film's sound, in the scene's colours.
+- **Looks:** Glow (the movie's colours mirrored in from the edge next to it), Reflection (a blurred mirror image of the picture), Mood, Edge light, Lava and Solid colour. The equalizer can be off or any of the 15 desktop equalizer styles.
+- **Settings:** brightness, colour boost, how fast the colours follow, equalizer height, pulse with the sound, flash on scene changes, *With full-screen video* or *Always*, and a 20-second **Preview**.
+- Click-through. It fades away while your mouse is on that screen.
+- **Protected streams** (Prime Video, Netflix and similar in a browser or their apps) are blocked from screen capture by Windows, so their picture comes out black to every app. For those, the colours come from the title's artwork when the player shares it, or from your *Visualizer colours* otherwise, and they still move to the sound. YouTube, local files (VLC, Media Player…), most other sites and games are read normally.
+- The movie's screen is read at a tiny size, on your PC only. Nothing is saved or sent.
+
+### NotchMine taskbar
+Settings → Taskbar swaps the Windows taskbar for one in NotchMine's style (the Windows one is the default):
+- **Dock + music:** now playing in the bottom-left corner, the dock with Start in the middle, Wi-Fi / sound / battery in the bottom-right corner, and an equalizer rising behind the dock while music plays.
+- **Floating dock:** the same dock, with now playing next to Wi-Fi / sound / battery in the bottom-right corner and the same equalizer behind it.
+- **Full-width bar:** edge to edge, with Start, search, your apps, now playing, status and the clock.
+
+The dock rests small, showing just Start and the apps that are open; hover it and it opens up with search, task view and every pinned app (it starts with the same pins as your Windows taskbar). Clicking works like the Windows taskbar: open, switch, minimize, cycle through an app's windows; right-click for its windows, pin / unpin and close. Start, search, quick settings and notifications open Windows' own. Maximized windows stop above it, and it steps aside for full-screen apps and games. The ^ button shows the Windows tray icons for a moment.
+
+**Back to the Windows taskbar** at any time: the button in Settings → Taskbar, the tray menu, or **Ctrl+Alt+T** from anywhere. If NotchMine closes or crashes, the Windows taskbar comes back by itself, with your own auto-hide setting.
+
+### Live wallpaper
+- An animated wallpaper **behind your desktop icons**, on every screen (or only the notch's). Settings → Wallpaper.
+- **Automatic** follows the weather in your city: sunny with turning sun rays, drifting clouds, rain with city lights, a thunderstorm with lightning every few seconds, falling snow, and on clear nights stars with shooting stars (or an aurora).
+- **Choose myself** keeps one style: Rain, Storm, Snow, Sunny, Cloudy, Starry night, Aurora or Music (bars that dance to whatever is playing).
+- **Pulse with the music** makes it glow on the beat. **Amount** and **Dim** (keeps icons readable) are sliders.
+- It costs nothing when you can't see it: it stops drawing behind full-screen apps, games and maximized windows, and can hold still on battery. Turning it off brings your normal wallpaper straight back.
+
 ### Side mode
 - **Your own app list** (Chrome by default). When one of them is **maximized** and in front, the notch moves to the middle of the right edge as an upright vertical pill.
 - It goes back to its spot as soon as that window is minimized, resized or closed.
@@ -168,6 +215,8 @@ NotchMine runs on your PC. It has no account, no analytics and no tracking. Only
 | Synced lyrics *(can be switched off)* | Song title, artist, album, length | [LRCLIB](https://lrclib.net) (free, no key) |
 | Missing album art *(can be switched off; only when the player shares none)* | Song title, artist | [iTunes Search API](https://performance-partners.apple.com/search-api) (free, no key) |
 | Website shortcuts | A request for that site's own favicon | The site you added |
+| Web search from the search box *(only when you pick it)* | What you typed | The search engine you chose (Google by default), in your browser |
+| Answers in the search box *(can be switched off)* | A question you typed (sent once you stop typing), or what you typed when you move to the web row | The search engine you chose, shown inside the box |
 
 Everything else stays on your PC:
 - **Audio visualizer:** system audio is analysed live and never recorded or saved.
@@ -175,6 +224,7 @@ Everything else stays on your PC:
 - **Camera/mic dots:** read from Windows' own privacy records.
 - **Wi-Fi bars:** signal strength only. NotchMine never reads your network name and doesn't need location access.
 - **Clipboard history:** kept in memory only. Switch it off in Settings.
+- **Search box:** apps, files, maths and conversions are worked out on your PC. Files come from Everything or the Windows search index, both local. What you open is remembered in `%APPDATA%\NotchMine\search-history.json` so your usual picks come first.
 - **Phone → PC:** only runs while you have it open, and only on your local network. Each session uses a new random link, and it switches off after 10 idle minutes. The transfer is **not encrypted**, so use it on your own Wi-Fi only, never on public networks. The first time, Windows Firewall may ask: allow **Private networks** only.
 
 Settings are stored in `%APPDATA%\NotchMine\settings.json`.
@@ -246,6 +296,7 @@ Your shell has `ELECTRON_RUN_AS_NODE` set (some editors and terminals set it). `
 src/
   main.js          Electron main process: windows, tray, hotkeys, settings, side mode, party mode,
                    desktop equalizer, screenshots/downloads watchers, OCR and phone-drop wiring
+  wallhost.js      The live wallpaper's own process (it shares input with Explorer, so it never runs in main)
   preload.js       The safe bridge between the UI and the main process
   lyrics.js        LRCLIB lookup + cache
   artwork.js       Album art lookup (iTunes Search) for players that share none
@@ -256,6 +307,11 @@ src/
     extras.js      Themes, launchpad, notifications, network, visualizer, sun/orb effects
     live.js        Live activities, lyrics, mixer, devices, recent items, phone drop UI
     stack.js       Stacked layout: every section at once in a tall column
+    weatherfx.js   Rain / snow / lightning / stars for the pill, panel and weather card
+    wallpaper.*    Live wallpaper (one window per screen, behind the desktop icons)
+    dock.*         NotchMine taskbar: Dock + music, Floating dock, Full-width bar
+    settings.*     The settings window (its own window: sidebar, search, every option)
+    common.js      Helpers shared by the notch and the settings window
     boot.js        Start-up
     party.*        Party mode (one full-screen window per display)
     deskeq.*       Desktop equalizer (click-through window per display)

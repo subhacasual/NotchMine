@@ -37,19 +37,10 @@ const AU = { an: null, ctx: null, data: null, peak: 0.6, bassPeak: 0.5 };
 // the raw bass (40–170 Hz) for beat detection (makeBeatDetector in eqstyles.js)
 const BEAT = { bass: 0 };
 const beatOf = makeBeatDetector();         // eqstyles.js
-async function startAudio() {
-  try {
-    const s = await navigator.mediaDevices.getUserMedia({
-      audio: { mandatory: { chromeMediaSource: 'desktop' } },
-      video: { mandatory: { chromeMediaSource: 'desktop', maxWidth: 64, maxHeight: 64, maxFrameRate: 1 } },
-    });
-    s.getVideoTracks().forEach(t => t.stop());
-    const ctx = new AudioContext();
-    const an = ctx.createAnalyser();
-    an.fftSize = 4096; an.smoothingTimeConstant = 0.55; an.minDecibels = -95; an.maxDecibels = -12;
-    ctx.createMediaStreamSource(s).connect(an);
-    Object.assign(AU, { an, ctx, data: new Uint8Array(an.frequencyBinCount), td: new Uint8Array(an.fftSize) });
-  } catch (e) { console.warn('desktop eq: no system audio', e && e.message); }
+// the sound comes from the notch's one capture (audiofeed.js), never a capture of our own
+function startAudio() {
+  const an = AUDIO_FEED.an;
+  Object.assign(AU, { an, ctx: AUDIO_FEED.ctx, data: new Uint8Array(an.frequencyBinCount), td: new Uint8Array(an.fftSize) });
 }
 
 // ---- drawing

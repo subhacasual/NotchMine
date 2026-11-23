@@ -2,16 +2,21 @@
 
 const {
   app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage,
-  clipboard, shell, globalShortcut, dialog, powerSaveBlocker,
+  clipboard, shell, globalShortcut, dialog, powerSaveBlocker, desktopCapturer,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { spawn, exec } = require('child_process');
+const { spawn, exec, execFile } = require('child_process');
+const net = require('net');
+
+// the live wallpaper's own process (see wallhost.js): nothing else of NotchMine runs in it
+if (process.argv.includes('--nm-wallpaper-host')) { require('./wallhost'); return; }
 const lyrics = require('./lyrics');
 const artwork = require('./artwork');
 const gameart = require('./gameart');
 const phone = require('./phone');
+const search = require('./search');
 
 // ------------------------------------------------------------------ constants
 const WIN_W = 820;   // transparent canvas; the visible notch is drawn inside it
@@ -64,6 +69,40 @@ const DEFAULTS = {
   deskEqScreens: 'all',     // 'all' | 'notch'
   deskEqMirror: true,       // bass in the middle, highs to the sides (else left → right)
   deskEqStyle: 'bars',      // look of the desktop equalizer: one of STYLES in renderer/deskeq.js (Settings → Style)
+  ambient: false,           // ambient screen: a full-screen movie on one screen colours the other screens
+  ambTrigger: 'fullscreen', // when: 'fullscreen' (a full-screen app on another screen) | 'always' (follows the main screen too)
+  ambStyle: 'glow',         // glow | reflect | mood | edge | lava | solid (renderer/ambient.js)
+  ambEq: 'bars',            // equalizer on top, in the scene's colours: 'none' or one of the eqstyles.js looks
+  ambBright: 70,            // 0-100
+  ambSat: 40,               // 0-100: colour boost
+  ambSpeed: 50,             // 0-100: how quickly the colours follow the picture
+  ambEqHeight: 40,          // 0-100
+  ambPulse: true,           // brighter on the beat
+  ambCutFlash: true,        // a soft flash when the scene changes
+  ambPeek: true,            // fades away while the mouse is on that screen
+  ambGames: false,          // also while a game runs
+  wpOn: false,              // live wallpaper behind the desktop icons (Settings → Wallpaper)
+  wpMode: 'auto',           // 'auto' = follows the weather | 'manual' = always wpStyle
+  wpStyle: 'rain',          // rain | storm | snow | sunny | cloudy | night | aurora | music
+  wpBack: 'scene',          // what's behind the effects: 'scene' (an animated sky) | 'mine' (your own Windows wallpaper)
+  wpNight: 'night',         // Automatic on a clear night: 'night' (stars) | 'aurora'
+  wpAmount: 60,             // 10-100: how much rain / snow / stars
+  wpDim: 15,                // 0-60: darkens it so desktop icons stay readable
+  wpBeat: true,             // pulse with the music
+  wpScreens: 'all',         // 'all' | 'notch'
+  wpPauseFs: true,          // stop drawing behind full-screen apps, games and maximized windows
+  wpBatteryStill: true,     // hold a still frame while on battery
+  tbStyle: 'windows',       // taskbar: 'windows' (the normal one) | 'dockeq' (dock + music) | 'dock' | 'bar' (full width)
+  tbLast: 'dockeq',         // the NotchMine style to return to (Ctrl+Alt+T, the tray menu)
+  tbHover: true,            // the dock rests small and opens up on hover
+  tbSize: 'm',              // dock size: 's' | 'm' | 'l'
+  tbNp: true,               // now-playing pill (Dock + music)
+  tbEq: true,               // equalizer behind the dock (Dock + music) / neon edge (Full-width bar)
+  tbFloatEq: false,         // equalizer along the bottom (Floating dock): off unless switched on in Settings → Taskbar
+  tbScreens: 'all',         // 'all' | 'main'
+  tbPins: null,             // pinned apps [{ path, name, lnk }]; first time: copied from the Windows taskbar
+  tbOrig: null,             // the Windows taskbar's own auto-hide setting while ours is on (to restore it, even after a crash)
+  tbOrigLayout: null,       // { al, mode }: Windows' own taskbar alignment + search button while ours is on (see tbLayout)
   partyLights: { beams: true, glow: true, particles: true, albumArt: true },
   partyAwake: true,         // keep the display awake while partying
   posX: 0.5,                // 0 = left edge, 0.5 = centre, 1 = right edge (of the chosen display)
@@ -91,6 +130,12 @@ const DEFAULTS = {
   shelf: [],                // file paths kept on the shelf
   pomodoroWork: 25,
   pomodoroBreak: 5,
+  searchOn: true,           // the search box (apps, files, maths, the web…) on a hotkey
+  searchHotkey: 'Ctrl+Alt+Space',
+  searchEngine: 'google',   // web searches from the box: google | bing | duckduckgo | brave | ecosia
+  searchFiles: true,        // files and folders (Everything when it runs, else the Windows search index)
+  searchClipboard: true,    // clipboard history in the results
+  searchPreview: true,      // questions ("capital of india"): the search engine's answer page right in the box
 };
 let settings = { ...DEFAULTS };
 try { settings = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8').replace(/^﻿/, '')) }; } catch { /* first run */ }
@@ -419,7 +464,7 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.once('ready-to-show', () => { win.showInactive(); });
   win.webContents.on('did-finish-load', applyScale);
-  win.on('blur', () => { send('blur'); onNotchBlur(); });
+  win.on('blur', () => send('blur'));
   // Keep links/popups out of the notch
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('will-navigate', e => e.preventDefault());
@@ -432,7 +477,51 @@ function createWindow() {
 
 function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+  if (channel === 'settings') sendSettingsWin('settings', payload);   // the settings window mirrors every change
 }
+
+// ------------------------------------------------------------------ settings window
+// Its own normal window (renderer/settings.html), so the notch stays light and there's room for more options.
+// Opened from the notch's gear or the tray. Changes made here go through 'settings-set' like any other.
+let setWin = null;
+function sendSettingsWin(channel, payload) {
+  if (setWin && !setWin.isDestroyed()) setWin.webContents.send(channel, payload);
+}
+function openSettings(sec) {
+  if (setWin && !setWin.isDestroyed()) {
+    if (setWin.isMinimized()) setWin.restore();
+    setWin.show();
+    setWin.focus();
+    if (sec) sendSettingsWin('settings-goto', sec);
+    return setWin;
+  }
+  const wa = targetDisplay().workArea;
+  const width = Math.min(940, wa.width - 40), height = Math.min(660, wa.height - 40);
+  setWin = new BrowserWindow({
+    width, height, minWidth: 680, minHeight: 460,
+    x: Math.round(wa.x + (wa.width - width) / 2), y: Math.round(wa.y + (wa.height - height) / 2),
+    show: false, title: 'NotchMine Settings', icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+    backgroundColor: '#141417',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#141417', symbolColor: '#e8e8ee', height: 40 },
+    autoHideMenuBar: true,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false },
+  });
+  setWin.removeMenu();
+  setWin.loadFile(path.join(__dirname, 'renderer', 'settings.html'), sec ? { query: { sec } } : undefined);
+  setWin.once('ready-to-show', () => { if (setWin && !setWin.isDestroyed()) setWin.show(); });
+  setWin.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/i.test(url)) shell.openExternal(url); return { action: 'deny' }; });
+  setWin.webContents.on('will-navigate', e => e.preventDefault());
+  if (!app.isPackaged) {
+    setWin.webContents.on('console-message', (_e, level, message, line, source) => {
+      if (level >= 2) console.log(`[settings] ${message} (${path.basename(source)}:${line})`);
+    });
+  }
+  setWin.on('closed', () => { setWin = null; });
+  return setWin;
+}
+ipcMain.on('open-settings', (_e, sec) => openSettings(typeof sec === 'string' ? sec : ''));
+ipcMain.handle('settings-init', () => ({ settings, weather: lastWx, accent: lastAccent, version: app.getVersion() }));
 
 function setVisible(visible) {
   if (!win) return;
@@ -445,6 +534,9 @@ function refreshVisibility() {
   setVisible(!userHidden && !partyWins.length && !(fullscreenOn && settings.fullscreenMode === 'hide' && !gameOn()));
   send('fullscreen', fullscreenOn && settings.fullscreenMode === 'dim' && !gameOn());   // renderer fades to a thin line
   syncDeskEq();
+  syncAmbient();
+  wpPauseSync();
+  dockVisibility();
 }
 function onFullscreen(msg) {
   let id = null;
@@ -454,26 +546,11 @@ function onFullscreen(msg) {
     try { id = screen.getDisplayMatching(screen.screenToDipRect(null, { x: l, y: t, width: r - l, height: b - t })).id; }
     catch { id = targetDisplay().id; }
   } else if (msg.value) id = targetDisplay().id;            // older bridge: no monitor info
-  clearTimeout(fsBlurTimer);
   if (!app.isPackaged) console.log('[fullscreen]', msg.value ? `ON display ${id} (notch on ${targetDisplay().id})` : 'off', `mode=${settings.fullscreenMode}`);
-  // clicking the notch makes it the foreground window; that isn't "left full-screen".
-  // Remember it: the bridge only reports changes, so once the notch loses focus to a normal window
-  // nothing new arrives; apply it then (unless the movie took the foreground back and reported in).
-  if (id === null && win && !win.isDestroyed() && win.isFocused()) { fsPendingExit = true; return; }
-  fsPendingExit = false;
+  // NotchMine's own windows in front (clicking the notch, or Windows focusing it when a full-screen browser is
+  // minimized) don't count either way: the bridge skips them (ForegroundFullscreenMonitor), so 'off' is real.
   fullscreenDisplayId = id;
   refreshVisibility();
-}
-let fsPendingExit = false, fsBlurTimer = 0;
-function onNotchBlur() {
-  if (!fsPendingExit) return;
-  clearTimeout(fsBlurTimer);
-  fsBlurTimer = setTimeout(() => {
-    if (!fsPendingExit) return;
-    fsPendingExit = false;
-    fullscreenDisplayId = null;
-    refreshVisibility();
-  }, 1500);                                                 // the bridge checks about once a second
 }
 
 // ------------------------------------------------------------------ desktop equalizer (click-through bars along the bottom)
@@ -508,15 +585,757 @@ function syncDeskEq() {
     eqWins.push({ win: w, displayId: d.id });
   }
 }
+// Clicking the taskbar (or Start, a tray icon…) lifts it to the top of the always-on-top windows, so with
+// Position = Bottom of screen it would cover the bars until the equalizer restarts. Lift the bars back over it:
+// right after the foreground changes, and every moment in between (it's one cheap window call per screen).
+function raiseDeskEq() {
+  for (const e of eqWins) {
+    if (e.win.isDestroyed() || !e.win.isVisible()) continue;
+    e.win.setAlwaysOnTop(true, 'screen-saver');
+    e.win.moveTop();
+  }
+}
+setInterval(() => { if (eqWins.length && settings.deskEqPos === 'bottom') raiseDeskEq(); }, 700);
+
+// ------------------------------------------------------------------ ambient screen (Settings → Ambient)
+// A movie (any full-screen app) on one screen colours the others. renderer/ambient.html captures that screen at a
+// tiny size, works out its colours scene by scene and paints them, plus an equalizer to the sound, across each other
+// screen. Click-through, and it fades away while the mouse is on its screen. Needs two or more screens.
+let ambWins = [];                // { win, displayId, info, peek }
+let ambPreviewUntil = 0, ambPreviewT = 0, ambSeq = 0, ambPeekT = 0;
+function ambSource() {
+  const all = screen.getAllDisplays();
+  if (all.length < 2 || partyWins.length) return null;
+  if (Date.now() < ambPreviewUntil) {            // Preview: the screen the Settings window is on colours the others
+    return setWin && !setWin.isDestroyed() ? screen.getDisplayMatching(setWin.getBounds()) : screen.getPrimaryDisplay();
+  }
+  if (!settings.ambient || (gameOn() && !settings.ambGames)) return null;
+  if (fullscreenDisplayId !== null) return all.find(d => d.id === fullscreenDisplayId) || null;
+  return settings.ambTrigger === 'always' ? screen.getPrimaryDisplay() : null;
+}
+// where the movie screen is, seen from screen d: its colours spill in from that edge
+function ambSide(d, src) {
+  const dx = (src.bounds.x + src.bounds.width / 2) - (d.bounds.x + d.bounds.width / 2);
+  const dy = (src.bounds.y + src.bounds.height / 2) - (d.bounds.y + d.bounds.height / 2);
+  return Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? 'left' : 'right') : (dy < 0 ? 'top' : 'bottom');
+}
+async function syncAmbient() {
+  if (!app.isReady()) return;
+  const seq = ++ambSeq;
+  const src = ambSource();
+  const targets = src ? screen.getAllDisplays().filter(d => d.id !== src.id) : [];
+  let sourceId = '';
+  if (targets.length) {
+    try {
+      const list = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+      const hit = list.find(x => String(x.display_id) === String(src.id));
+      sourceId = hit ? hit.id : '';
+      if (!hit && !app.isPackaged) console.warn('[ambient] no capture source for display', src.id);
+    } catch (e) { console.warn('[ambient] screen sources:', e.message); }
+    if (seq !== ambSeq) return;                // a newer sync is on its way
+  }
+  const want = sourceId ? targets : [];
+  const ids = new Set(want.map(d => d.id));
+  for (const e of ambWins) if (!ids.has(e.displayId) && !e.win.isDestroyed()) e.win.destroy();
+  ambWins = ambWins.filter(e => ids.has(e.displayId) && !e.win.isDestroyed());
+  const preview = Date.now() < ambPreviewUntil;
+  for (const d of want) {
+    const info = { sourceId, side: ambSide(d, src), preview };
+    const have = ambWins.find(e => e.displayId === d.id);
+    if (have) {
+      have.win.setBounds(d.bounds);
+      if (JSON.stringify(have.info) !== JSON.stringify(info)) { have.info = info; have.win.webContents.send('amb-src', info); }
+      continue;
+    }
+    const w = new BrowserWindow({
+      ...d.bounds, frame: false, transparent: true, backgroundColor: '#00000000', resizable: false, movable: false,
+      minimizable: false, maximizable: false, focusable: false, skipTaskbar: true, alwaysOnTop: true, hasShadow: false,
+      show: false, title: 'NotchMine Ambient',
+      webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false },
+    });
+    w.setIgnoreMouseEvents(true);                    // never blocks the mouse
+    w.setAlwaysOnTop(true, 'screen-saver');
+    if (!app.isPackaged) w.webContents.on('console-message', (_ev, level, message) => console.log(message.startsWith('[ambient]') ? message : `[ambient ${d.id}] ${message}`));
+    w.loadFile(path.join(__dirname, 'renderer', 'ambient.html'));
+    w.once('ready-to-show', () => {
+      w.setBounds(d.bounds);
+      w.showInactive();
+      if (win && !win.isDestroyed() && win.isVisible()) win.moveTop();   // the notch stays on top of it
+    });
+    const rec = { win: w, displayId: d.id, info, peek: false };
+    w.on('closed', () => { ambWins = ambWins.filter(x => x !== rec); });
+    ambWins.push(rec);
+  }
+  if (ambWins.length && !ambPeekT) ambPeekT = setInterval(ambPeek, 200);
+  if (!ambWins.length && ambPeekT) { clearInterval(ambPeekT); ambPeekT = 0; }
+  wpPauseSync();
+}
+// the mouse on an ambient screen: it fades away so that screen can be used (it is click-through anyway)
+function ambPeek() {
+  const at = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id;
+  for (const e of ambWins) {
+    if (e.win.isDestroyed()) continue;
+    const peek = settings.ambPeek !== false && !e.info.preview && at === e.displayId;
+    if (peek !== e.peek) { e.peek = peek; e.win.webContents.send('amb-peek', peek); wpPauseSync(); }
+  }
+}
+ipcMain.handle('amb-init', e => {
+  const rec = ambWins.find(x => !x.win.isDestroyed() && x.win.webContents === e.sender);
+  return { settings, accent: lastAccent, media: lastState.media || null, ...(rec ? rec.info : {}), peek: rec ? rec.peek : false, dev: !app.isPackaged };
+});
+ipcMain.on('amb-preview', () => {                // Settings → Ambient → Preview: 20 seconds
+  if (screen.getAllDisplays().length < 2) return;
+  ambPreviewUntil = Date.now() + 20000;
+  clearTimeout(ambPreviewT);
+  ambPreviewT = setTimeout(() => { ambPreviewUntil = 0; syncAmbient(); }, 20100);
+  syncAmbient();
+});
 
 // ------------------------------------------------------------------ party mode (full-screen light show)
 let partyWins = [];
 let partyBlocker = null;
 let lastAccent = '167, 139, 250';
-function sendParty(channel, payload) {      // party screens + desktop equalizer windows
+function sendParty(channel, payload) {      // party screens + desktop equalizer windows (+ the wallpaper host)
   for (const w of partyWins) if (!w.isDestroyed()) w.webContents.send(channel, payload);
   for (const e of eqWins) if (!e.win.isDestroyed()) e.win.webContents.send(channel, payload);
+  for (const e of ambWins) if (!e.win.isDestroyed()) e.win.webContents.send(channel, payload);
+  if (channel === 'settings') wpHostSend({ type: 'settings', settings: payload });
 }
+
+// ------------------------------------------------------------------ live wallpaper (behind the desktop icons)
+// One window per screen running renderer/wallpaper.html, hosted by a separate process (wallhost.js explains why:
+// a window behind the icons shares its input with Explorer, so it must never belong to this busy process).
+// The host creates them off-screen, then the bridge makes each a child of the desktop right below the icons
+// (Desk.Attach in bridge.ps1). A wallpaper stops drawing while its screen is covered. While the wallpaper is on,
+// the bridge also watches the desktop and the taskbar: if they stop responding, the wallpaper switches itself off.
+let wpHost = null;             // the host process while the wallpaper is on
+const wpRecs = new Map();      // display id → { hwnd, attached }
+let wpPausedMap = {};
+let wpRestarts = 0;            // host crashes in a row (gives up after 3)
+let lastWx = null;             // the weather the notch last reported (Automatic follows it)
+let fgMaxDisplay = null;       // the screen the active maximized window covers
+function wpDisplays() {
+  if (!settings.wpOn) return [];
+  return settings.wpScreens === 'notch' ? [targetDisplay()] : screen.getAllDisplays();
+}
+function wpPausedFor(id) {
+  if (partyWins.length) return true;                          // party mode covers the screens anyway
+  if (ambWins.some(e => e.displayId === id && !e.peek)) return true;   // the ambient screen covers it
+  if (settings.wpPauseFs === false) return false;
+  return gameOn() || fullscreenDisplayId === id || fgMaxDisplay === id;
+}
+// messages go over a private named pipe (an Electron process on Windows has no usable stdin); queued until it connects
+function wpHostSend(m) {
+  if (!wpHost) return;
+  const line = JSON.stringify(m) + '\n';
+  if (wpHost.sock && !wpHost.sock.destroyed) { try { wpHost.sock.write(line); } catch { /* host gone */ } }
+  else wpHost.queue.push(line);
+}
+function wpPauseSync() {
+  if (!wpHost) return;
+  const map = {};
+  for (const d of wpDisplays()) map[d.id] = wpPausedFor(d.id);
+  if (JSON.stringify(map) === JSON.stringify(wpPausedMap)) return;
+  wpPausedMap = map;
+  wpHostSend({ type: 'paused', map });
+}
+function startWpHost() {
+  const pipe = `\\\\.\\pipe\\notchmine-wallpaper-${process.pid}-${Date.now()}`;
+  const args = [...(app.isPackaged ? [] : [app.getAppPath()]), '--nm-wallpaper-host', `--nm-pipe=${pipe}`];
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const h = spawn(process.execPath, args, { env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+  h.queue = [];
+  h.server = net.createServer(sock => {
+    if (h.sock || wpHost !== h) { sock.destroy(); return; }    // only the one host we started
+    h.sock = sock;
+    for (const line of h.queue.splice(0)) sock.write(line);
+    let buf = '';
+    sock.on('data', d => {
+      buf += d;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 1);
+        let m; try { m = JSON.parse(line); } catch { continue; }
+        if (wpHost === h) onWpHost(m);
+      }
+    });
+    sock.on('error', () => { /* the host went away: 'exit' handles it */ });
+  });
+  h.server.listen(pipe);
+  wpHost = h;
+  wpPausedMap = {};
+  h.stderr.on('data', d => {
+    const s = String(d).trim();
+    if (!app.isPackaged && s && !/cache_util|disk_cache|gpu_|Autofill/i.test(s)) console.log('[wallpaper host]', s);
+  });
+  h.on('error', err => console.warn('[wallpaper] host could not start:', err.message));
+  h.on('exit', code => {
+    try { h.server.close(); } catch { /* closed */ }
+    if (wpHost !== h) return;                                  // stopped on purpose
+    wpHost = null; wpRecs.clear(); wpPausedMap = {};
+    bridgeCmd('wp watch off');
+    bridgeCmd('wp refresh');
+    console.warn('[wallpaper] host exited', code);
+    if (settings.wpOn && ++wpRestarts <= 3) setTimeout(() => syncWallpaper(), 3000);
+  });
+  wpHostSend({ type: 'settings', settings });
+  wpHostSend({ type: 'weather', weather: lastWx });
+  if (settings.wpBack === 'mine') syncMyWallpaper(true);
+}
+function stopWpHost() {
+  const h = wpHost;
+  if (!h) return;
+  wpHost = null; wpRecs.clear(); wpPausedMap = {};
+  bridgeCmd('wp watch off');
+  try { if (h.sock && !h.sock.destroyed) h.sock.write(JSON.stringify({ type: 'quit' }) + '\n'); } catch { /* gone */ }
+  setTimeout(() => { try { h.kill(); } catch { /* gone */ } try { h.server.close(); } catch { /* closed */ } }, 1500);
+  setTimeout(() => bridgeCmd('wp refresh'), 300);             // the normal wallpaper shows again at once
+}
+function syncWallpaper(rebuild) {
+  if (!app.isReady()) return;
+  const displays = wpDisplays();
+  if (!displays.length) { stopWpHost(); return; }
+  if (!wpHost) startWpHost();
+  let removed = false;
+  for (const id of [...wpRecs.keys()]) {
+    if (!rebuild && displays.some(d => d.id === id)) continue;
+    wpHostSend({ type: 'close', id }); wpRecs.delete(id); removed = true;
+  }
+  if (removed) setTimeout(() => bridgeCmd('wp refresh'), 200);
+  wpHostSend({ type: 'displays', list: displays.map(d => ({ id: d.id, bounds: d.bounds })) });
+  wpPauseSync();
+}
+function onWpHost(m) {
+  switch (m.type) {
+    case 'hwnd': {
+      wpRecs.set(m.id, { hwnd: String(m.hwnd), attached: false });
+      const r = m.rect || {};
+      bridgeCmd(`wp attach ${m.hwnd} ${Math.round(r.x)} ${Math.round(r.y)} ${Math.round(r.width)} ${Math.round(r.height)}`);
+      break;
+    }
+    case 'closed':                     // not closed by us: Explorer restarted and took it. Come back once it's up.
+      wpRecs.delete(m.id);
+      setTimeout(() => syncWallpaper(), 3000);
+      break;
+    case 'log': if (!app.isPackaged) console.log(m.message); break;
+  }
+}
+function onWpAttached(m) {
+  const id = [...wpRecs.entries()].find(([, r]) => r.hwnd === String(m.hwnd))?.[0];
+  if (id === undefined) return;
+  if (m.mode) {
+    wpRecs.get(id).attached = true;
+    wpRestarts = 0;
+    bridgeCmd('wp watch on');
+    if (!app.isPackaged) console.log('[wallpaper] placed behind the icons:', m.mode);
+    return;
+  }
+  console.warn('[wallpaper] could not place it behind the desktop icons');
+  wpHostSend({ type: 'close', id });
+  wpRecs.delete(id);
+}
+// the bridge saw the desktop or the taskbar stop responding while the wallpaper was on: switch it off for good
+function onWpHang(m) {
+  if (!wpHost) return;
+  console.warn('[wallpaper] the desktop stopped responding (' + (m.what || '?') + '): switching the live wallpaper off');
+  const h = wpHost;
+  stopWpHost();
+  try { h.kill(); } catch { /* gone */ }                      // at once: that's what frees Explorer
+  settings.wpOn = false;
+  saveSettings();
+  send('settings', settings);
+  if (tray) tray.setContextMenu(buildTrayMenu());
+  send('notif', { id: Date.now(), app: 'NotchMine', title: 'Live wallpaper switched off', body: 'The desktop stopped responding while it was on. You can turn it back on in Settings → Wallpaper.', time: Date.now(), icon: null });
+}
+// the active window changed: a maximized one hides the wallpaper on its screen
+function wpForeground(m) {
+  const self = path.basename(process.execPath).toLowerCase();
+  if (m.exe === self || SHELL_CLASSES.test(m.cls || '')) return;     // the notch, the taskbar… change nothing
+  if (DESKTOP_CLASSES.test(m.cls || '') || !m.max) fgMaxDisplay = null;
+  else fgMaxDisplay = screen.getDisplayNearestPoint(screen.screenToDipPoint({ x: (m.l + m.r) / 2, y: (m.t + m.b) / 2 })).id;
+  wpPauseSync();
+}
+
+// ---- "My wallpaper" (Settings → Wallpaper → Background): your own Windows wallpaper behind the live effects.
+// Found in the registry (or Windows' own copy of it); the host process decodes and scales it. Checked again every
+// 30 s, so changing the wallpaper in Windows follows along. Here only a small preview is made, for Settings.
+let myWp = { key: null, thumb: null, path: null };
+function myWallpaperPath() {
+  return new Promise(res => execFile('reg', ['query', 'HKCU\\Control Panel\\Desktop', '/v', 'WallPaper'], { windowsHide: true }, (err, out) => {
+    const m = !err && /WallPaper\s+REG_(?:EXPAND_)?SZ\s+(.+)/i.exec(out || '');
+    const p = m && m[1].trim();
+    if (p && fs.existsSync(p)) return res(p);
+    const t = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Themes', 'TranscodedWallpaper');
+    res(fs.existsSync(t) ? t : null);
+  }));
+}
+async function loadMyWallpaper() {                   // true when the picture changed
+  const p = await myWallpaperPath();
+  let key = '';
+  try { key = p ? `${p}|${fs.statSync(p).mtimeMs}` : ''; } catch { /* gone */ }
+  if (key === myWp.key) return false;
+  let thumb = null;
+  if (p) {
+    try { thumb = (await nativeImage.createThumbnailFromPath(p, { width: 320, height: 200 })).toDataURL(); } catch {
+      try { const img = nativeImage.createFromBuffer(fs.readFileSync(p)); if (!img.isEmpty()) thumb = img.resize({ width: 320 }).toDataURL(); } catch { /* unreadable */ }
+    }
+  }
+  myWp = { key, thumb, path: p };
+  return true;
+}
+async function syncMyWallpaper(force) {
+  const want = settings.wpOn && settings.wpBack === 'mine';
+  const changed = want ? await loadMyWallpaper() : false;
+  if (force || changed) wpHostSend(want && myWp.path ? { type: 'bg', path: myWp.path, key: myWp.key } : { type: 'bg' });
+  if (changed) sendSettingsWin('my-wallpaper', { path: myWp.path, thumb: myWp.thumb });
+}
+setInterval(() => { if (wpHost && settings.wpBack === 'mine') syncMyWallpaper(); }, 30000);
+ipcMain.handle('my-wallpaper', async () => { await loadMyWallpaper(); return { path: myWp.path, thumb: myWp.thumb }; });
+ipcMain.on('weather-report', (_e, w) => {
+  lastWx = w && typeof w.code === 'number' ? { code: w.code, isDay: w.isDay !== false, text: typeof w.text === 'string' ? w.text.slice(0, 60) : '' } : null;
+  wpHostSend({ type: 'weather', weather: lastWx });
+  sendSettingsWin('wp-weather', lastWx);
+  dockPush();
+});
+
+// ------------------------------------------------------------------ NotchMine taskbar (the dock)
+// Settings → Taskbar. With a NotchMine style the Windows taskbar is hidden (bridge: Bar.Hide) and one dock window
+// per screen (renderer/dock.html) sits along the bottom: see-through and click-through except the dock itself.
+// The dock registers as an app bar, so maximized windows stop above it. Going back to 'windows' (the button,
+// Ctrl+Alt+T, the tray menu) restores the Windows taskbar exactly as it was; if NotchMine quits or crashes,
+// the bridge restores it by itself (and the next start does too, from tbOrig).
+const TB_CUSTOM = ['dockeq', 'dock', 'bar'];
+const DOCK_WIN_H = 360;                                          // the window: the dock + room for the window list on hover
+const DOCK_RESERVE = { dockeq: 64, dock: 64, bar: 48 };          // the strip maximized windows leave free (DIP)
+let dockWins = [];               // { win, displayId, hwnd, reserved }
+let tasks = [];                  // open windows, from the bridge
+let fgHwnd = null;               // the active window
+let tbApplied = false;           // the Windows taskbar is hidden by us
+const tbCustom = () => TB_CUSTOM.includes(settings.tbStyle);
+
+// pinned apps: the first time (and on Settings → Taskbar → Copy from Windows taskbar), the same ones in the same
+// order as on the Windows taskbar. Normal programs have a shortcut in the "User Pinned\TaskBar" folder; Store apps
+// (WhatsApp, Teams, Microsoft Store…) have none: they're only in Windows' own pin list (Taskband\Favorites in the
+// registry), which also holds the order. A Store app pin is { aumid, id, name }; it opens through shell:AppsFolder.
+const PKG_AUMID = /^[A-Za-z0-9][A-Za-z0-9.\-]*_[a-z0-9]{13}![A-Za-z0-9.\-]+$/;   // a Store app's app ID
+function pinsFromFolder() {
+  const dir = path.join(app.getPath('appData'), 'Microsoft', 'Internet Explorer', 'Quick Launch', 'User Pinned', 'TaskBar');
+  const pins = [];
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.toLowerCase().endsWith('.lnk')) continue;
+      const lnk = path.join(dir, f);
+      try {
+        const t = shell.readShortcutLink(lnk);
+        // File Explorer's shortcut has no target file, only its icon (explorer.exe)
+        const icon = (t.icon || '').replace(/%([^%]+)%/g, (m, v) => process.env[v] || m);
+        const target = t.target || (/\.exe$/i.test(icon) ? icon : '');
+        if (target && fs.existsSync(target)) pins.push({ path: target, name: f.slice(0, -4), lnk });
+      } catch { /* a broken shortcut */ }
+    }
+  } catch { /* no pinned folder */ }
+  return pins;
+}
+let pinImport = null;
+function importWindowsPins() {
+  if (pinImport) return pinImport;
+  const files = pinsFromFolder();
+  const reg = new Promise(res => execFile('reg', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Taskband', '/v', 'Favorites'],
+    { windowsHide: true, maxBuffer: 4 << 20 }, (err, out) => res(!err && /Favorites\s+REG_BINARY\s+([0-9A-F]+)/i.exec(out || ''))));
+  // the Store apps' names, as Start shows them
+  const names = new Promise(res => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Get-StartApps | ConvertTo-Json -Compress'],
+    { windowsHide: true, maxBuffer: 8 << 20, timeout: 20000 }, (err, out) => {
+      const map = new Map();
+      try { for (const a of [].concat(JSON.parse(out))) if (a && a.AppID) map.set(String(a.AppID).toLowerCase(), String(a.Name || '')); } catch { /* none */ }
+      res(map);
+    }));
+  pinImport = Promise.all([reg, names]).then(([hex, nameOf]) => {
+    // the list is binary; names and app IDs sit in it as UTF-16 text, in pin order (at either byte alignment)
+    const found = [];
+    if (hex) {
+      const buf = Buffer.from(hex[1], 'hex');
+      for (const off of [0, 1]) {
+        const s = buf.subarray(off).toString('utf16le');
+        for (const m of s.matchAll(/[A-Za-z0-9][A-Za-z0-9.\-]*_[a-z0-9]{13}![A-Za-z0-9.\-]+/g)) found.push({ at: m.index * 2 + off, aumid: m[0] });
+        for (const f of files) { const i = s.indexOf(path.basename(f.lnk)); if (i >= 0) found.push({ at: i * 2 + off, file: f }); }
+      }
+    }
+    found.sort((a, b) => a.at - b.at);
+    const pins = [], seen = new Set();
+    for (const o of found) {
+      const k = o.aumid ? 'id:' + o.aumid.toLowerCase() : o.file.lnk;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (o.file) { pins.push(o.file); continue; }
+      const name = nameOf.get(o.aumid.toLowerCase()) || o.aumid.replace(/^[^.]*\./, '').replace(/_.*$/, '').replace(/Desktop$/, '');
+      pins.push({ aumid: o.aumid, id: o.aumid, name, path: '' });
+    }
+    for (const f of files) if (!seen.has(f.lnk)) pins.push(f);       // a shortcut the list doesn't name: at the end
+    settings.tbPins = pins;
+    settings.tbPinsV = 3;
+    saveSettings();
+    if (!app.isPackaged) console.log('[dock] pinned apps from the Windows taskbar:', pins.map(p => p.name).join(', '));
+    pinImport = null;
+    dockPush();
+    return pins;
+  }).catch(e => { pinImport = null; console.warn('[dock] could not read the Windows taskbar pins:', e.message); });
+  return pinImport;
+}
+function tbPins() {
+  if (Array.isArray(settings.tbPins) && settings.tbPinsV === 3) return settings.tbPins;
+  importWindowsPins();                                              // until it's read: the shortcut files alone
+  return Array.isArray(settings.tbPins) ? settings.tbPins : pinsFromFolder();
+}
+// one pin (to remove it): Store apps by app ID, programs by shortcut + exe
+const pinKey = p => p.aumid ? 'id:' + p.aumid.toLowerCase() : `${p.lnk || ''}|${appKey(p.path)}`;
+// open an app: its shortcut, a Store app through Windows' app list, else the exe
+function launchApp(x) {
+  if (x.lnk && fs.existsSync(x.lnk)) { shell.openPath(x.lnk); return; }
+  const aumid = x.aumid || (PKG_AUMID.test(x.id || '') ? x.id : '');
+  if (aumid) { spawn('explorer.exe', [`shell:AppsFolder\\${aumid}`], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); return; }
+  shell.openPath(x.path);
+}
+// Windows puts windows on taskbar buttons by "app ID" (Chrome profiles and web apps each get their own); the
+// bridge reads it for windows (tasks) and for pinned shortcuts (asked once each, below)
+const lnkIds = new Map();        // shortcut → app ID ('' = none), undefined while asking
+const idWait = new Map();
+let idSeq = 0;
+function pinId(p) {
+  if (!p.lnk) return p.id || '';                                 // pinned from the dock: remembered with it
+  if (!lnkIds.has(p.lnk)) {
+    lnkIds.set(p.lnk, '');
+    const id = 'a' + (++idSeq); idWait.set(id, p.lnk);
+    bridgeCmd(`aumid ${id} ${p.lnk}`);
+  }
+  return lnkIds.get(p.lnk) || '';
+}
+function onAumid(m) {
+  const lnk = idWait.get(m.id);
+  if (!lnk) return;
+  idWait.delete(m.id);
+  lnkIds.set(lnk, String(m.value || ''));
+  dockPush();
+}
+const appKey = p => (p || '').toLowerCase();
+const prettyName = p => path.basename(p || '', '.exe').replace(/^./, c => c.toUpperCase());
+// NotchMine's Settings window on the dock (see dockApps): its handle as the bridge writes it, and its icon
+const OWN_SETTINGS = 'own:settings';
+function settingsHwnd() {
+  if (!setWin || setWin.isDestroyed()) return '';
+  try { const b = setWin.getNativeWindowHandle(); return String(b.length >= 8 ? b.readBigInt64LE(0) : b.readInt32LE(0)); } catch { return ''; }
+}
+let ownIcon;
+function ownIconUrl() {
+  if (ownIcon === undefined) {
+    try { const img = nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'icon.png')); ownIcon = img.isEmpty() ? null : img.resize({ width: 48, height: 48, quality: 'best' }).toDataURL(); } catch { ownIcon = null; }
+  }
+  return ownIcon;
+}
+// the apps the dock shows: pinned first (in order), then the other running ones; each with its windows
+function dockApps() {
+  const pins = tbPins();
+  const apps = pins.map(p => {
+    const id = pinId(p);
+    return { key: id ? 'id:' + id.toLowerCase() : appKey(p.path), id, name: p.name, path: p.path, lnk: p.lnk, aumid: p.aumid, pinned: true, windows: [] };
+  });
+  const self = appKey(process.execPath);
+  const setHwnd = settingsHwnd();
+  for (const t of tasks) {
+    // NotchMine's own windows (also another copy of it) stay off the dock, except Settings: a normal window that
+    // can be minimized, so it needs a button to come back from
+    if (setHwnd && t.hwnd === setHwnd) {
+      apps.push({ key: OWN_SETTINGS, id: '', name: 'NotchMine Settings', path: '', own: true, pinned: false, windows: [{ hwnd: t.hwnd, title: t.title, min: t.min }] });
+      continue;
+    }
+    if (t.pid === process.pid || !t.path) continue;
+    if (appKey(t.path) === self) continue;
+    const id = t.aumid || '';
+    const k = id ? 'id:' + id.toLowerCase() : appKey(t.path);
+    let a = apps.find(x => x.key === k);
+    // no app ID of its own (File Explorer, many classic apps): it belongs to the pinned app with the same exe
+    if (!a && !id) a = apps.find(x => x.pinned && appKey(x.path) === appKey(t.path));
+    if (!a) {
+      const prof = /UserData\.(.+)$/i.exec(id);              // Chrome / Edge: another profile gets its own button
+      const name = prof ? `${prettyName(t.path)} (${prof[1].replace(/^Profile(\d+)$/i, 'Profile $1')})` : /_crx_/i.test(id) ? t.title : prettyName(t.path);
+      a = { key: k, id, name, path: t.path, pinned: false, windows: [] };
+      apps.push(a);
+    }
+    a.windows.push({ hwnd: t.hwnd, title: t.title, min: t.min });
+  }
+  return apps;
+}
+const dockIcons = new Map();     // "index|file" → data URL (48 px, extracted by the bridge)
+const lnkIcons = new Map();      // shortcut → "index|file" of the icon it names (web apps, Office, store installers…)
+const iconWait = new Map();      // bridge request id → "index|file"
+let iconSeq = 0;
+function dockIconSrc(a) {
+  // a Store app (pinned, or running from WindowsApps): its icon as Start shows it, by app ID
+  if (a.aumid) return `app|${a.aumid}`;
+  if (!a.lnk && PKG_AUMID.test(a.id || '') && /[\\/]WindowsApps[\\/]/i.test(a.path || '')) return `app|${a.id}`;
+  if (!a.lnk) return `0|${a.path}`;
+  if (!lnkIcons.has(a.lnk)) {
+    let src = `0|${a.path}`;
+    try {
+      const t = shell.readShortcutLink(a.lnk);
+      const f = t.icon && t.icon.replace(/%([^%]+)%/g, (m, v) => process.env[v] || m);
+      if (f && fs.existsSync(f)) src = `${t.iconIndex || 0}|${f}`;
+    } catch { /* keep the exe */ }
+    lnkIcons.set(a.lnk, src);
+  }
+  return lnkIcons.get(a.lnk);
+}
+function dockIconLoad(src) {
+  const id = 'i' + (++iconSeq);
+  iconWait.set(id, src);
+  if (src.startsWith('app|')) { bridgeCmd(`appicon ${id} ${src.slice(4)}`); return; }
+  const [index, ...file] = src.split('|');
+  bridgeCmd(`icon ${id} ${index} ${file.join('|')}`);
+}
+function onIcon(m) {
+  const src = iconWait.get(m.id);
+  if (!src) return;
+  iconWait.delete(m.id);
+  if (m.data) { dockIcons.set(src, 'data:image/png;base64,' + m.data); dockPush(); return; }
+  if (src.startsWith('app|')) return;                                 // no picture for that Store app: keep its letter
+  exeIcon(src.split('|').slice(1).join('|')).then(u => { dockIcons.set(src, u); dockPush(); });   // fallback: Electron's own
+}
+// the floating dock has its own equalizer switch; Dock + music and the full-width bar share tbEq
+const dockEqOn = () => (settings.tbStyle === 'dock' ? settings.tbFloatEq : settings.tbEq) !== false;
+function dockState() {
+  const apps = dockApps();
+  let missing = false;
+  for (const a of apps) {
+    a.active = a.windows.some(w => w.hwnd === fgHwnd && !w.min);
+    if (a.own) { a.icon = ownIconUrl(); continue; }
+    // a pinned shortcut may name its own icon file (web apps like YouTube Music do); otherwise the exe's icon
+    const src = dockIconSrc(a);
+    if (!dockIcons.has(src)) { dockIcons.set(src, null); missing = true; dockIconLoad(src); }
+    a.icon = dockIcons.get(src) || null;
+  }
+  const m = lastState.media || {};
+  return {
+    style: settings.tbStyle, hover: settings.tbHover !== false, size: settings.tbSize || 'm',
+    np: settings.tbNp !== false, eq: dockEqOn(),
+    apps, fg: fgHwnd, accent: lastAccent, wx: lastWx, volume: lastState.volume || null, conn: lastState.conn || null,
+    media: m.active ? { title: m.title, artist: m.artist, thumb: m.thumb || null, playing: m.status === 'Playing' } : null,
+    loading: missing,
+  };
+}
+let dockPushT = 0;
+function dockPush() {
+  if (!dockWins.length) return;
+  clearTimeout(dockPushT);
+  dockPushT = setTimeout(() => {
+    const st = dockState();
+    for (const e of dockWins) if (!e.win.isDestroyed()) e.win.webContents.send('dock-state', st);
+  }, 60);
+}
+
+function dockDisplays() { return settings.tbScreens === 'main' ? [screen.getPrimaryDisplay()] : screen.getAllDisplays(); }
+function dockBounds(d) { return { x: d.bounds.x, y: d.bounds.y + d.bounds.height - DOCK_WIN_H, width: d.bounds.width, height: DOCK_WIN_H }; }
+// The strip is reserved by a tiny invisible window of its own: Windows nudges an app bar's window out of the
+// strip it reserves, which pushed the dock up. The dock window itself stays pinned to the bottom edge.
+function dockReserve(e, d) {
+  if (!e.abWin) {
+    e.abWin = new BrowserWindow({ x: d.bounds.x, y: d.bounds.y, width: 1, height: 1, show: false, frame: false, skipTaskbar: true, focusable: false, title: 'NotchMine Dock Space' });
+    e.hwnd = e.abWin.getNativeWindowHandle().readBigUInt64LE(0).toString();
+  }
+  const h = Math.round((DOCK_RESERVE[settings.tbStyle] || 72) * ({ s: .85, m: 1, l: 1.15 }[settings.tbSize] || 1));
+  if (e.reserved === h) return;
+  e.reserved = h;
+  const r = screen.dipToScreenRect(null, { x: d.bounds.x, y: d.bounds.y + d.bounds.height - h, width: d.bounds.width, height: h });
+  bridgeCmd(`tb appbar ${e.hwnd} ${r.x} ${r.y} ${r.x + r.width} ${r.y + r.height}`);
+}
+function dockCreate(d) {
+  const w = new BrowserWindow({
+    ...dockBounds(d), frame: false, transparent: true, backgroundColor: '#00000000', resizable: false, movable: false,
+    minimizable: false, maximizable: false, focusable: false, skipTaskbar: true, alwaysOnTop: true, hasShadow: false,
+    show: false, title: 'NotchMine Dock',
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false },
+  });
+  const e = { win: w, displayId: d.id };
+  w.webContents.on('console-message', (_ev, level, message) => { if (!app.isPackaged && level >= 2) console.log(`[dock ${d.id}] ${message}`); });   // TEMP DIAG
+  w.setIgnoreMouseEvents(true, { forward: true });             // only the dock itself catches the mouse
+  w.setAlwaysOnTop(true, 'floating');
+  w.loadFile(path.join(__dirname, 'renderer', 'dock.html'));
+  w.once('ready-to-show', () => {
+    w.setBounds(dockBounds(d));
+    dockReserve(e, d);
+    dockVisibility();
+  });
+  // keep it on the bottom edge whatever moves it (a work-area change, another app bar…)
+  let fixT = 0;
+  w.on('move', () => {
+    clearTimeout(fixT);
+    fixT = setTimeout(() => {
+      if (w.isDestroyed()) return;
+      const want = dockBounds(screen.getAllDisplays().find(x => x.id === e.displayId) || d), b = w.getBounds();
+      if (b.x !== want.x || b.y !== want.y || b.width !== want.width) w.setBounds(want);
+    }, 120);
+  });
+  w.on('closed', () => { dockWins = dockWins.filter(x => x !== e); });
+  dockWins.push(e);
+}
+function dockClose(e) {
+  if (e.hwnd) bridgeCmd(`tb appbar-off ${e.hwnd}`);
+  if (e.abWin && !e.abWin.isDestroyed()) e.abWin.destroy();
+  if (!e.win.isDestroyed()) e.win.destroy();
+}
+// full-screen apps, games and party mode: the dock steps aside (the Windows taskbar would too)
+function dockVisibility() {
+  for (const e of dockWins) {
+    if (e.win.isDestroyed()) continue;
+    const hide = partyWins.length || gameOn() || fullscreenDisplayId === e.displayId;
+    if (hide && e.win.isVisible()) e.win.hide();
+    else if (!hide && !e.win.isVisible()) {
+      e.win.showInactive();
+      e.win.setAlwaysOnTop(true, 'floating');                  // shown again: back over other windows (it came back below them)
+      e.over = undefined;                                      // and the click-through state is set afresh
+    }
+  }
+}
+function syncDock(rebuild) {
+  if (!app.isReady() || !bridge) return;
+  if (!tbCustom()) {
+    for (const e of dockWins) dockClose(e);
+    dockWins = [];
+    bridgeCmd('tb tasks off');
+    if (tbApplied || settings.tbOrig != null) {
+      bridgeCmd(settings.tbOrig != null ? `tb restore ${settings.tbOrig}` : 'tb show');
+      tbApplied = false; settings.tbOrig = null; saveSettings();
+    }
+    tbLayoutBack();
+    return;
+  }
+  if (!tbApplied) { bridgeCmd(`tb hide ${settings.tbOrig != null ? settings.tbOrig : -1}`); tbApplied = true; }
+  tbLayout();
+  bridgeCmd('tb tasks on');
+  const displays = dockDisplays();
+  const ids = new Set(displays.map(d => d.id));
+  for (const e of dockWins) if (rebuild || !ids.has(e.displayId)) { e.gone = true; dockClose(e); }
+  dockWins = dockWins.filter(e => !e.gone);
+  for (const d of displays) {
+    const have = dockWins.find(e => e.displayId === d.id);
+    if (!have) dockCreate(d);
+    else { have.reserved = null; dockReserve(have, d); }       // the style or size changed the strip
+  }
+  dockVisibility();
+  dockPush();
+}
+// Start and search are Windows' own, and Windows opens them where its own (hidden) taskbar keeps them. So the
+// Windows taskbar is laid out like ours (bridge: Bar.Layout): left-aligned with a search box for the full-width bar
+// (Start opens at the left, and Win+S types into the Windows box that lands right on our Search pill), centred with
+// a search icon for the docks (Start and search open centred above the dock, search typing in its own panel).
+// The user's own values come back with the Windows taskbar (and after a crash, from tbOrigLayout).
+let tbLayoutSent = '';
+function tbLayout() {
+  const want = settings.tbStyle === 'bar' ? '0 2' : '1 1';
+  if (want === tbLayoutSent) return;
+  tbLayoutSent = want;
+  const o = settings.tbOrigLayout;
+  bridgeCmd(`tb layout ${want} ${o ? o.al : -2} ${o ? o.mode : -2}`);
+}
+function tbLayoutBack() {
+  if (!tbLayoutSent && !settings.tbOrigLayout) return;
+  const o = settings.tbOrigLayout;
+  bridgeCmd(o ? `tb layout-restore ${o.al} ${o.mode}` : 'tb layout-back');
+  tbLayoutSent = '';
+  if (o) { settings.tbOrigLayout = null; saveSettings(); }
+}
+function setTaskbarStyle(style) {
+  if (TB_CUSTOM.includes(style)) settings.tbLast = style;
+  settings.tbStyle = style;
+  saveSettings();
+  syncDock();
+  send('settings', settings);
+  if (tray) tray.setContextMenu(buildTrayMenu());
+}
+const toggleTaskbar = () => setTaskbarStyle(tbCustom() ? 'windows' : (settings.tbLast || 'dockeq'));
+
+ipcMain.handle('dock-init', () => dockState());
+// Click-through is decided here, by polling the cursor against the boxes the dock renderer reports (the dock, the
+// pills, the window list), like the notch does. It used to follow the renderer's own mousemove / mouseleave, but
+// those arrive through Electron's forwarding (a low-level mouse hook Windows silently removes if the app is ever
+// slow to answer it) and flipping click-through makes Chromium report a fake mouseleave: either way the dock could
+// end up click-through with the mouse resting on an icon, so clicks went to the window behind it.
+ipcMain.on('dock-rects', (e, rects) => {
+  const rec = dockWins.find(x => !x.win.isDestroyed() && x.win.webContents === e.sender);
+  if (!rec || !Array.isArray(rects)) return;
+  rec.rects = rects.filter(r => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite)).slice(0, 40);
+  dockWatch();
+});
+let dockWatchT = 0;
+function dockWatch() {
+  if (dockWatchT) return;
+  dockWatchT = setInterval(() => {
+    if (!dockWins.length) { clearInterval(dockWatchT); dockWatchT = 0; return; }
+    const p = screen.getCursorScreenPoint();
+    for (const e of dockWins) {
+      if (e.win.isDestroyed()) continue;
+      let over = false;
+      if (e.rects && e.win.isVisible()) {
+        const b = e.win.getBounds(), x = p.x - b.x, y = p.y - b.y;   // window DIP = the page's CSS px (no zoom)
+        over = e.rects.some(([rx, ry, rw, rh]) => x >= rx && x < rx + rw && y >= ry && y < ry + rh);
+      }
+      if (over === e.over) continue;
+      e.over = over;
+      e.win.setIgnoreMouseEvents(!over, { forward: true });
+      e.win.webContents.send('dock-over', over);
+    }
+  }, 30);
+}
+ipcMain.on('dock-cmd', (e, c) => {
+  if (!app.isPackaged) console.log('[DIAG dock-cmd]', JSON.stringify(c));   // TEMP DIAG
+  if (!c || typeof c !== 'object') return;
+  const apps = dockApps();
+  const a = c.key ? apps.find(x => x.key === c.key) : null;
+  const launch = launchApp;
+  switch (c.cmd) {
+    case 'app': {                  // like the Windows taskbar: open it, bring it up, or minimize it
+      if (!a) return;
+      if (a.own) {                 // NotchMine Settings: our own window, so Electron can do it directly
+        if (!setWin || setWin.isDestroyed()) openSettings();
+        else if (!setWin.isMinimized() && setWin.isFocused()) setWin.minimize();
+        else openSettings();       // restores, shows and focuses it
+        return;
+      }
+      if (!a.windows.length) { launch(a); return; }
+      const fg = a.windows.find(w => w.hwnd === fgHwnd && !w.min);
+      if (fg && a.windows.length === 1) bridgeCmd(`win min ${fg.hwnd}`);
+      else if (fg) { const i = a.windows.indexOf(fg); bridgeCmd(`win activate ${a.windows[(i + 1) % a.windows.length].hwnd}`); }   // several: cycle
+      else bridgeCmd(`win activate ${a.windows[0].hwnd}`);
+      break;
+    }
+    case 'menu': {                 // right-click on an app
+      if (!a) return;
+      const rec = dockWins.find(x => !x.win.isDestroyed() && x.win.webContents === e.sender);
+      const tmpl = a.own ? [                                     // NotchMine Settings: nothing to pin or launch
+        { label: 'Open', click: () => openSettings() },
+        { label: 'Close window', click: () => { if (setWin && !setWin.isDestroyed()) setWin.close(); } },
+      ] : [
+        ...a.windows.map(w => ({ label: (w.title || a.name).slice(0, 60), click: () => bridgeCmd(`win activate ${w.hwnd}`) })),
+        ...(a.windows.length ? [{ type: 'separator' }] : []),
+        { label: a.name, enabled: false },
+        { label: a.windows.length ? 'Open new window' : 'Open', click: () => launch(a) },
+        a.pinned
+          ? { label: 'Unpin from dock', click: () => { settings.tbPins = tbPins().filter(p => pinKey(p) !== pinKey(a)); saveSettings(); dockPush(); } }
+          : { label: 'Pin to dock', click: () => {
+            const store = PKG_AUMID.test(a.id || '') && /[\\/]WindowsApps[\\/]/i.test(a.path || '');   // a Store app opens by app ID
+            settings.tbPins = [...tbPins(), store ? { aumid: a.id, id: a.id, name: a.name, path: '' } : { path: a.path, name: a.name, id: a.id || '' }];
+            saveSettings(); dockPush();
+          } },
+        ...(a.windows.length ? [{ label: a.windows.length > 1 ? 'Close all windows' : 'Close window', click: () => a.windows.forEach(w => bridgeCmd(`win close ${w.hwnd}`)) }] : []),
+      ];
+      if (rec) Menu.buildFromTemplate(tmpl).popup({ window: rec.win });
+      break;
+    }
+    case 'win': if (/^\d+$/.test(String(c.hwnd)) && ['activate', 'close', 'min'].includes(c.act)) bridgeCmd(`win ${c.act} ${c.hwnd}`); break;
+    case 'key': if (['start', 'search', 'taskview', 'quick', 'notif'].includes(c.what)) bridgeCmd(`tb key ${c.what}`); break;
+    case 'tray': bridgeCmd('tb peek'); break;
+    case 'media': if (['toggle', 'next', 'prev'].includes(c.what)) bridgeCmd(`media ${c.what}`); break;
+  }
+});
 function startParty() {
   if (partyWins.length) return;
   const all = screen.getAllDisplays();
@@ -653,7 +1472,7 @@ function bridgePath() {
 function startBridge() {
   bridge = spawn('powershell.exe', [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', bridgePath(),
-  ], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  ], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, NOTCHMINE_PID: String(process.pid) } });
 
   bridge.stdout.setEncoding('utf8');
   bridge.stdout.on('data', chunk => {
@@ -680,9 +1499,30 @@ function startBridge() {
 
 const notifLog = [];   // recent notifications, newest first (kept for renderer reloads)
 function handleBridge(msg) {
+  if (msg.type === 'media' || msg.type === 'volume' || msg.type === 'conn') setTimeout(dockPush, 0);   // after lastState is updated
   switch (msg.type) {
+    case 'tasks':
+      tasks = Array.isArray(msg.list) ? msg.list : [];
+      dockPush();
+      break;
+    case 'icon':
+      onIcon(msg);
+      break;
+    case 'aumid':
+      onAumid(msg);
+      break;
+    case 'tb-hidden':
+      if (settings.tbOrig == null && Number.isInteger(msg.orig) && msg.orig >= 0) { settings.tbOrig = msg.orig; saveSettings(); }
+      break;
+    case 'tb-layout':
+      if (settings.tbOrigLayout == null && tbLayoutSent && Number.isInteger(msg.al) && Number.isInteger(msg.mode) && msg.al >= -1 && msg.mode >= -1) {
+        settings.tbOrigLayout = { al: msg.al, mode: msg.mode }; saveSettings();
+      }
+      break;
     case 'ready':
       bridgeRestarts = 0;
+      tbLayoutSent = '';
+      if (tbApplied) { bridgeCmd(`tb hide ${settings.tbOrig != null ? settings.tbOrig : -1}`); tbLayout(); bridgeCmd('tb tasks on'); }   // a restarted bridge
       bridgeCmd('games');
       bridgeCmd(`notif ${settings.notifications ? 'on' : 'off'}`);
       break;
@@ -721,7 +1561,13 @@ function handleBridge(msg) {
       send('mic', msg);
       if (tray) tray.setContextMenu(buildTrayMenu());
       break;
+    case 'wp-attached':
+      onWpAttached(msg);
+      break;
     case 'foreground':
+      wpForeground(msg);
+      if (msg.hwnd != null) { fgHwnd = String(msg.hwnd); dockPush(); }
+      if (eqWins.length && settings.deskEqPos === 'bottom') raiseDeskEq();   // e.g. the taskbar was just clicked
       if (!snapFgLock) onForeground(msg);           // self-test: ignore the real desktop while it fakes a game
       break;
     case 'tracked':
@@ -748,6 +1594,7 @@ function handleBridge(msg) {
       send('notif', msg);
       break;
     case 'log': console.log('[bridge]', msg.message); break;
+    case 'wp-hang': onWpHang(msg); break;
     case 'fullscreen':
       onFullscreen(msg);
       break;
@@ -801,6 +1648,7 @@ function webAppName(id) {
 }
 
 function bridgeCmd(cmd) {
+  if (!app.isPackaged && /^(win|tb key|tb peek)/.test(cmd)) console.log('[DIAG bridge<-]', cmd, 'writable=', !!(bridge && bridge.stdin.writable));   // TEMP DIAG
   if (bridge && bridge.stdin.writable) bridge.stdin.write(cmd + '\n');
 }
 
@@ -997,6 +1845,12 @@ function buildTrayMenu() {
     { label: 'NotchMine', enabled: false },
     { type: 'separator' },
     {
+      label: 'Search…',
+      accelerator: search.hotkeyLabel() || undefined,
+      enabled: settings.searchOn !== false,
+      click: () => search.show(),
+    },
+    {
       label: userHidden ? 'Show notch' : 'Hide notch',
       accelerator: 'Ctrl+Alt+N',
       click: () => { userHidden = !userHidden; refreshVisibility(); tray.setContextMenu(buildTrayMenu()); },
@@ -1006,6 +1860,11 @@ function buildTrayMenu() {
       type: 'checkbox',
       checked: !!settings.deskEq,
       click: m => { settings.deskEq = m.checked; saveSettings(); syncDeskEq(); send('settings', settings); },
+    },
+    {
+      label: tbCustom() ? 'Back to the Windows taskbar' : 'Use the NotchMine taskbar',
+      accelerator: 'Ctrl+Alt+T',
+      click: () => toggleTaskbar(),
     },
     {
       label: partyWins.length ? 'Stop party mode' : 'Party mode',
@@ -1040,7 +1899,7 @@ function buildTrayMenu() {
       checked: settings.launchAtLogin,
       click: m => { applyLoginItem(m.checked); send('settings', settings); },
     },
-    { label: 'Settings…', click: () => send('open-tab', 'settings') },
+    { label: 'Settings…', click: () => openSettings() },
     { label: 'Reload', click: () => win && win.reload() },
     { type: 'separator' },
     { label: 'Quit NotchMine', click: () => { app.isQuitting = true; app.quit(); } },
@@ -1078,7 +1937,24 @@ ipcMain.on('brightness-refresh', () => bridgeCmd('bright get'));
 
 ipcMain.handle('side-apps', async () => Promise.all(recentApps.map(async a => ({ ...a, icon: await exeIcon(a.path) }))));
 ipcMain.handle('app-icon', (_e, p) => exeIcon(p));
-ipcMain.handle('init', () => ({ game: gamePayload(), side: sideActive, fullscreenDim: fullscreenOn && settings.fullscreenMode === 'dim', anchor: anchorCss, settings, state: lastState, clipboard: clipHistory, notifs: notifLog, recent, phone: phone.status() }));
+// ---- the app's one system-audio capture is the notch's: its levels go on to every other window that moves to music.
+// (Each window capturing on its own made an external monitor drop out on some laptops, again and again.)
+let audioWant = false, audioFrameSeen = false;
+function audioWantNow() {
+  return (dockWins.length > 0 && dockEqOn()) || eqWins.length > 0 || partyWins.length > 0 || ambWins.length > 0 ||
+    (!!wpHost && (settings.wpBeat !== false || (settings.wpMode === 'manual' && settings.wpStyle === 'music')));
+}
+setInterval(() => { const w = audioWantNow(); if (w !== audioWant) { audioWant = w; send('audio-want', w); } }, 1000);
+ipcMain.on('audio-frame', (e, f) => {
+  if (!win || e.sender !== win.webContents || !f || !f.freq) return;
+  if (!app.isPackaged && !audioFrameSeen) { audioFrameSeen = true; console.log(`[audio] sharing the notch's sound: ${dockWins.length} dock, ${eqWins.length} desktop eq, ${partyWins.length} party, wallpaper ${wpHost ? 'on' : 'off'}`); }
+  for (const d of dockWins) if (!d.win.isDestroyed()) d.win.webContents.send('audio', f);
+  for (const q of eqWins) if (!q.win.isDestroyed()) q.win.webContents.send('audio', f);
+  for (const q of ambWins) if (!q.win.isDestroyed()) q.win.webContents.send('audio', f);
+  for (const p of partyWins) if (!p.isDestroyed()) p.webContents.send('audio', f);
+  if (wpHost) wpHostSend({ type: 'audio', rate: f.rate, size: f.size, freq: Array.from(f.freq), td: f.td ? Array.from(f.td) : null });
+});
+ipcMain.handle('init', () => ({ audioWant: (audioWant = audioWantNow()), game: gamePayload(), side: sideActive, fullscreenDim: fullscreenOn && settings.fullscreenMode === 'dim', anchor: anchorCss, settings, state: lastState, clipboard: clipHistory, notifs: notifLog, recent, phone: phone.status() }));
 
 // v3: mixer, mic, lyrics, captures, phone drop
 ipcMain.on('mixer-get', () => bridgeCmd('mixer get'));
@@ -1157,6 +2033,9 @@ ipcMain.on('accent-changed', (_e, rgb) => {
   if (typeof rgb !== 'string' || !/^\d{1,3}, ?\d{1,3}, ?\d{1,3}$/.test(rgb)) return;
   lastAccent = rgb;
   sendParty('accent', rgb);
+  search.onSettings({ accent: rgb });
+  sendSettingsWin('accent', rgb);
+  dockPush();
 });
 ipcMain.handle('settings-set', (_e, patch) => {
   const before = { ...settings };
@@ -1164,6 +2043,13 @@ ipcMain.handle('settings-set', (_e, patch) => {
   if ('scale' in patch) applyScale();
   if ('posX' in patch || 'posY' in patch || 'displayId' in patch || 'shape' in patch || 'layout' in patch) placeWindow();
   if (['deskEq', 'deskEqPos', 'deskEqScreens', 'displayId', 'fullscreenMode'].some(k => k in patch)) syncDeskEq();
+  if (['ambient', 'ambTrigger', 'ambGames'].some(k => k in patch)) syncAmbient();
+  if (['wpOn', 'wpScreens', 'displayId'].some(k => k in patch)) syncWallpaper();
+  if ('tbStyle' in patch && TB_CUSTOM.includes(patch.tbStyle)) settings.tbLast = patch.tbStyle;
+  if (Object.keys(patch).some(k => k.startsWith('tb'))) setTimeout(() => syncDock(), 0);
+  if ('wpPauseFs' in patch) wpPauseSync();
+  if ('wpBack' in patch) syncMyWallpaper(true);
+  if (patch.tbPinsReset) { delete settings.tbPinsReset; settings.tbPinsV = 0; importWindowsPins(); }   // Copy from Windows taskbar
   if (['gameMode', 'gameAuto', 'gameApps', 'notGames'].some(k => k in patch)) evaluateGame();
   if ('sideMode' in patch || 'sideApps' in patch || 'displayId' in patch) evaluateSide();
   if ('notifications' in patch) {
@@ -1173,10 +2059,14 @@ ipcMain.handle('settings-set', (_e, patch) => {
   if ('launchAtLogin' in patch && patch.launchAtLogin !== before.launchAtLogin) applyLoginItem(patch.launchAtLogin);
   if ('fullscreenMode' in patch || 'displayId' in patch) refreshVisibility();
   if ('clipboardHistory' in patch && !patch.clipboardHistory) { clipHistory = []; send('clipboard', clipHistory); }
+  search.onSettings(patch);
   saveSettings();
   if (tray) tray.setContextMenu(buildTrayMenu());
   sendParty('settings', settings);
-  if (_e.sender !== win?.webContents) send('settings', settings);   // a change made in party mode reaches the notch
+  // a change made elsewhere (settings window, party mode) reaches the notch, and the settings window hears about
+  // changes made elsewhere; the window that made the change gets the result as its reply instead
+  if (_e.sender !== win?.webContents && win && !win.isDestroyed()) win.webContents.send('settings', settings);
+  if (setWin && !setWin.isDestroyed() && _e.sender !== setWin.webContents) setWin.webContents.send('settings', settings);
   return settings;
 });
 
@@ -1192,13 +2082,14 @@ ipcMain.on('start-drag', async (e, p) => {
   try { icon = await app.getFileIcon(p, { size: 'normal' }); } catch { icon = trayIcon(); }
   e.sender.startDrag({ file: p, icon });
 });
-ipcMain.on('copy-text', (_e, t) => {
+function copyText(t) {
   if (typeof t !== 'string') return;
   lastClip = t; // don't re-add as "new"
   clipboard.writeText(t);
   clipHistory = [t, ...clipHistory.filter(x => x !== t)].slice(0, 20);
   send('clipboard', clipHistory);
-});
+}
+ipcMain.on('copy-text', (_e, t) => copyText(t));
 ipcMain.on('clear-clipboard-history', () => { clipHistory = []; send('clipboard', clipHistory); });
 
 const ACTIONS = {
@@ -1220,6 +2111,44 @@ ipcMain.on('action', (_e, name) => {
   const fn = ACTIONS[name]; if (fn) fn();
 });
 ipcMain.on('clear-notifs', () => { notifLog.length = 0; });
+
+// ------------------------------------------------------------------ search box (search.js)
+// commands it can run: NotchMine's own, plus Windows pages and tools (ACTIONS)
+const SEARCH_COMMANDS = {
+  party: () => (partyWins.length ? stopParty() : startParty()),
+  deskeq: () => { settings.deskEq = !settings.deskEq; saveSettings(); syncDeskEq(); send('settings', settings); if (tray) tray.setContextMenu(buildTrayMenu()); },
+  taskbar: () => toggleTaskbar(),
+  hide: () => { userHidden = !userHidden; refreshVisibility(); if (tray) tray.setContextMenu(buildTrayMenu()); },
+  nmsettings: () => openSettings(),
+  mic: () => bridgeCmd('mic toggle'),
+  mute: () => bridgeCmd('vol mute'),
+  playpause: () => bridgeCmd('media toggle'),
+  next: () => bridgeCmd('media next'),
+  prev: () => bridgeCmd('media prev'),
+  display: () => shell.openExternal('ms-settings:display'),
+  updates: () => shell.openExternal('ms-settings:windowsupdate'),
+  installed: () => shell.openExternal('ms-settings:appsfeatures'),
+  personalize: () => shell.openExternal('ms-settings:personalization-background'),
+  recycle: () => spawn('explorer.exe', ['shell:RecycleBinFolder'], { detached: true, stdio: 'ignore', windowsHide: true }).unref(),
+  downloads: () => shell.openPath(app.getPath('downloads')),
+};
+function searchCommand(name) {
+  const fn = SEARCH_COMMANDS[name] || ACTIONS[name];
+  if (fn) fn();
+}
+// where the box opens: a little below the pill, centred under it (side and game mode, or the notch hidden:
+// near the top of the screen, in the middle)
+const SEARCH_GAP = 10;                                   // css px between the pill and the box
+function searchSpot() {
+  const d = targetDisplay(), z = zoom();
+  if (!win || win.isDestroyed() || sideActive || gameOn() || !win.isVisible()) {
+    return { display: d, cx: d.bounds.x + d.bounds.width / 2, y: d.bounds.y + Math.round(14 * z), island: true };
+  }
+  // the pill's bottom edge (the hit rect is the pill plus a small margin, in css px inside the window)
+  let bottom = hitRect.y + hitRect.height;
+  if (!(bottom > 0) || bottom > 100) bottom = (isIsland() ? 8 : 0) + 44;   // the panel is open: use the pill's usual size
+  return { display: d, cx: pillCenterX(), y: win.getBounds().y + Math.round((bottom + SEARCH_GAP) * z), island: true };
+}
 
 // ------------------------------------------------------------------ custom shortcuts (Apps tab)
 const isUrl = t => /^[a-z][a-z0-9+.-]*:\/\//i.test(t) || /^(ms-[a-z-]+|mailto|steam|spotify|discord):/i.test(t);
@@ -1288,12 +2217,13 @@ ipcMain.handle('remove-shortcut', (_e, id) => {
   return settings;
 });
 
-ipcMain.on('launch', (_e, id) => {
+function launchShortcut(id) {
   const s = (settings.shortcuts || []).find(x => x.id === id);
   if (!s) return;
   if (isUrl(s.target)) shell.openExternal(s.target);
   else shell.openPath(s.target);
-});
+}
+ipcMain.on('launch', (_e, id) => launchShortcut(id));
 ipcMain.handle('picker-open', () => pickerOpen);
 ipcMain.on('focus-window', () => { if (win) win.focus(); });
 ipcMain.on('quit', () => { app.isQuitting = true; app.quit(); });
@@ -1318,6 +2248,22 @@ app.whenReady().then(() => {
   globalShortcut.register('CommandOrControl+Alt+P', () => (partyWins.length ? stopParty() : startParty()));
   // open / close the panel without touching the mouse (made for game mode, works any time)
   globalShortcut.register('CommandOrControl+Alt+G', () => send('panel-toggle'));
+  // back to the Windows taskbar (or to the NotchMine one again) from anywhere
+  globalShortcut.register('CommandOrControl+Alt+T', () => toggleTaskbar());
+  // the search box (its hotkey can be changed in Settings → Search)
+  search.init({
+    settings: () => settings,
+    set: patch => { Object.assign(settings, patch); saveSettings(); send('settings', settings); if (tray) tray.setContextMenu(buildTrayMenu()); },
+    spot: searchSpot,
+    zoom,
+    accent: () => lastAccent,
+    clipboard: () => (settings.clipboardHistory ? clipHistory : []),
+    copyText,
+    launchShortcut,
+    command: searchCommand,
+    searching: on => send('search-state', on),
+  });
+  tray.setContextMenu(buildTrayMenu());               // now with the search hotkey
   setInterval(() => bridgeCmd('games'), 10 * 60 * 1000);   // pick up games Windows learned about meanwhile
 
   lyrics.init(path.join(app.getPath('userData'), 'lyrics-cache.json'));
@@ -1326,10 +2272,15 @@ app.whenReady().then(() => {
   seedImageSig();
   watchDownloads();
 
-  screen.on('display-metrics-changed', () => { placeWindow(); syncDeskEq(); });   // also: taskbar moved / resized
-  screen.on('display-added', () => { placeWindow(); syncDeskEq(); tray.setContextMenu(buildTrayMenu()); });
-  screen.on('display-removed', () => { placeWindow(); syncDeskEq(); tray.setContextMenu(buildTrayMenu()); });
+  screen.on('display-metrics-changed', (_e, _d, changed) => {                 // also: taskbar moved / resized
+    placeWindow(); syncDeskEq();
+    if ((changed || []).some(c => c !== 'workArea')) { syncWallpaper(true); syncDock(true); }   // size / scale, not just the work area
+  });
+  screen.on('display-added', () => { placeWindow(); syncDeskEq(); syncAmbient(); syncWallpaper(true); syncDock(true); tray.setContextMenu(buildTrayMenu()); });
+  screen.on('display-removed', () => { placeWindow(); syncDeskEq(); syncAmbient(); syncWallpaper(true); syncDock(true); tray.setContextMenu(buildTrayMenu()); });
   syncDeskEq();
+  setTimeout(() => syncWallpaper(), 1500);              // after the bridge is up (it places the wallpaper)
+  setTimeout(() => syncDock(), 1500);                   // the NotchMine taskbar (or puts the Windows one back after a crash)
 
   sampleSystem();
   setInterval(sampleSystem, 1500);
@@ -1340,7 +2291,12 @@ app.whenReady().then(() => {
   // switches it off stays off). Re-registering on every start keeps the path current
   // if the portable .exe was moved. Self-test runs never touch the login item.
   if (!process.env.NOTCH_SNAP) {
-    if (app.isPackaged && !settings.loginInit) { settings.loginInit = true; settings.launchAtLogin = true; saveSettings(); }
+    if (app.isPackaged && !settings.loginInit) {
+      // the installer's "Start NotchMine when Windows starts" box (no file = portable build: on)
+      let pick = true;
+      try { pick = JSON.parse(fs.readFileSync(path.join(process.resourcesPath, 'setup.json'), 'utf8')).launchAtLogin !== false; } catch { /* no choice made */ }
+      settings.loginInit = true; settings.launchAtLogin = pick; saveSettings();
+    }
     if (settings.launchAtLogin) applyLoginItem(true);
   }
   if (process.env.NOTCH_SNAP) runSnapshots(process.env.NOTCH_SNAP);
@@ -1353,9 +2309,21 @@ async function runSnapshots(dir) {
   fs.mkdirSync(dir, { recursive: true });
   if (win.webContents.isLoading()) await new Promise(r => win.webContents.once('did-finish-load', r));
   await wait(3500);
+  let snapWin = null;              // a step can aim the next snapshot at another window (the settings window)
   const snap = async name => {
-    const img = await win.webContents.capturePage();
+    const w = snapWin && !snapWin.isDestroyed() ? snapWin : win;
+    snapWin = null;
+    const img = await w.webContents.capturePage();
     fs.writeFileSync(path.join(dir, name + '.png'), img.toPNG());
+  };
+  // open the settings window on a section (after optional notch / settings-window code) and snap that window
+  const settingsShot = (sec, notchCode = '', winCode = '') => async () => {
+    if (notchCode) await js(notchCode);
+    const w = openSettings(sec);
+    if (w.webContents.isLoading()) await new Promise(r => w.webContents.once('did-finish-load', r));
+    await wait(500);
+    await w.webContents.executeJavaScript(`showSec(${JSON.stringify(sec)}); ${winCode}`);
+    snapWin = w;
   };
   const steps = (process.env.NOTCH_SNAP_STEPS || '').split(',').filter(Boolean);
   const fakeNotifs = `[
@@ -1372,9 +2340,11 @@ async function runSnapshots(dir) {
     ['shelf', `document.getElementById('appCancel').click(); __notchDebug.setTab('shelf')`],
     ['alerts-empty', `__notchDebug.setTab('alerts')`],
     ['alerts', `${fakeNotifs}.forEach(n => __notchDebug.addNotif(n, true)); __notchDebug.setTab('home'); __notchDebug.setTab('alerts')`],
-    ['settings', `__notchDebug.setTab('settings')`],
-    ['settings-look', `document.querySelector('#setNav [data-sec=look]').click()`],
-    ['settings-widgets', `document.querySelector('#setNav [data-sec=widgets]').click()`],
+    ['settings', settingsShot('general')],
+    ['settings-look', settingsShot('look')],
+    ['settings-widgets', settingsShot('widgets')],
+    ['settings-search-box', settingsShot('search')],
+    ['settings-search', settingsShot('general', '', `const q = document.getElementById('search'); q.value = 'screen'; runSearch(q.value)`)],
     ['peek-notif', `__notchDebug.collapse(); setTimeout(() => __notchDebug.peekNotif(${fakeNotifs}[0]), 50)`],
     ['theme-aurora', `__notchDebug.patchSettings({theme:'aurora'}); __notchDebug.expand('home')`],
     ['theme-graphite', `__notchDebug.patchSettings({theme:'graphite', accentMode:'teal'})`],
@@ -1415,7 +2385,7 @@ async function runSnapshots(dir) {
     ['idle2-charging', `__notchDebug.S.batt = { level: 0.64, charging: true, chargingTime: 1800, dischargingTime: Infinity }; renderCompact()`],
     ['idle2-downloading', `__notchDebug.S.netBusyUntil = Date.now() + 60000; renderCompact()`],
     ['idle2-minimal', `__notchDebug.S.netBusyUntil = 0; __notchDebug.ALERTS.unread = 0; renderAlertBadge(); __notchDebug.patchSettings({ idleMinimal: true })`],
-    ['idle2-settings', `__notchDebug.patchSettings({ idleMinimal: false }); __notchDebug.S.pinned = true; __notchDebug.expand('settings'); document.querySelector('#setNav [data-sec=widgets]').click()`],
+    ['idle2-settings', settingsShot('widgets', `__notchDebug.patchSettings({ idleMinimal: false })`)],
     ['idle-day', `__notchDebug.S.weather = { temp: 31, code: 2, isDay: true }; renderCompact()`],
     ['idle-rain-hot', `__notchDebug.S.weather = { temp: 26, code: 63, isDay: true }; __notchDebug.S.sys = { ...__notchDebug.S.sys, cpu: 93 }; renderCompact()`],
     // weather looks (Weather theme): pill + the Home card for each kind of sky
@@ -1426,11 +2396,53 @@ async function runSnapshots(dir) {
       ...(n === 'rain' ? [['wx-rain-panel', `__notchDebug.setTab('system'); new Promise(r => setTimeout(r, 900))`]] : []),
     ]),
     ['home-volume', `__notchDebug.patchSettings({ theme: 'midnight' }); __notchDebug.S.volume = { level: 0.42, muted: false }; renderVolume(); __notchDebug.S.pinned = true; __notchDebug.expand('home'); __notchDebug.onMedia({ type: 'media', active: true, app: 'Spotify.exe', title: 'Neon Skyline', artist: 'Demo Artist', status: 'Playing', position: 62, duration: 244, updatedAt: Date.now(), canPrev: true, canNext: true, canSeek: true, thumbId: 7, thumb: null }); new Promise(r => setTimeout(r, 1200))`],
-    ['wx-settings', `__notchDebug.S.pinned = true; __notchDebug.expand(); __notchDebug.setTab('settings'); document.querySelector('#setNav [data-sec=look]').click(); new Promise(r => setTimeout(r, 600))`],
+    // ---- live wallpaper: turn it on, check every screen got one behind the icons and that it animates
+    ['wallpaper-on', async () => {
+      await js(`__notchDebug.patchSettings({ wpOn: true, wpMode: 'auto' }); __notchDebug.previewWeather(63, true)`);
+      await wait(6000);
+      for (const [id, r] of wpRecs) console.log(`[wallpaper-test] display ${id} attached=${r.attached} hwnd=${r.hwnd}`);
+    }],
+    // ---- NotchMine taskbar: switch to each style, look at the dock, then put the Windows taskbar back
+    ['taskbar-test', async () => {
+      const wa0 = screen.getPrimaryDisplay().workArea;
+      console.log('[taskbar-test] before: work area', JSON.stringify(wa0));
+      for (const style of ['dockeq', 'dock', 'bar']) {
+        await js(`__notchDebug.patchSettings({ tbStyle: '${style}' })`);
+        await wait(3500);
+        const wa = screen.getPrimaryDisplay().workArea;
+        const d = dockWins.find(e => e.displayId === screen.getPrimaryDisplay().id);
+        if (!d) { console.log('[taskbar-test]', style, 'NO DOCK WINDOW'); continue; }
+        const info = await d.win.webContents.executeJavaScript(`JSON.stringify({ apps: window.__dock.state().apps.map(a => a.name + (a.windows.length ? '*' + a.windows.length : '') + (a.icon ? '' : '(no icon)')), media: !!window.__dock.state().media })`);
+        console.log('[taskbar-test]', style, 'dock windows:', dockWins.length, '| work area', JSON.stringify(wa), '| visible', d.win.isVisible(), '|', info);
+        const sb = screen.getPrimaryDisplay().bounds, wb = d.win.getBounds();
+        const inner = await d.win.webContents.executeJavaScript(`JSON.stringify({ ih: innerHeight, bar: (() => { const r = document.getElementById(document.getElementById('bar').hidden ? 'dock' : 'bar').getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; })() })`);
+        console.log('[taskbar-test]', style, 'screen bottom', sb.y + sb.height, '| window', JSON.stringify(wb), 'ends at', wb.y + wb.height, '|', inner);
+        if (style === 'dockeq') {                                   // hover: the dock opens up
+          await d.win.webContents.executeJavaScript(`document.getElementById('dock').dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))`);
+          await wait(900);
+          await d.win.webContents.executeJavaScript(`(() => { const ic = [...document.querySelectorAll('#dock .ico[data-key]')].find(x => x.querySelector('.dots')); if (ic) ic.dispatchEvent(new MouseEvent('mousemove', { bubbles: true })); })()`);
+          await wait(500);
+        }
+        const img = await d.win.webContents.capturePage();
+        fs.writeFileSync(path.join(dir, `taskbar-${style}.png`), img.toPNG());
+      }
+      await js(`__notchDebug.patchSettings({ tbStyle: 'windows' })`);
+      await wait(2500);
+      console.log('[taskbar-test] back to Windows: dock windows', dockWins.length, '| work area', JSON.stringify(screen.getPrimaryDisplay().workArea), '| orig remembered', settings.tbOrig);
+    }],
+    ['taskbar-settings', settingsShot('taskbar')],
+    ['wallpaper-settings', settingsShot('wallpaper')],
+    ['wallpaper-manual', `__notchDebug.patchSettings({ wpMode: 'manual', wpStyle: 'aurora' }); new Promise(r => setTimeout(r, 1500))`],
+    ['wallpaper-off', async () => {
+      await js(`__notchDebug.patchSettings({ wpOn: false, wpMode: 'auto' })`);
+      await wait(1500);
+      console.log('[wallpaper-test] after off: host running =', !!wpHost);
+    }],
+    ['wx-settings', settingsShot('look')],
     ['wx-reset', `__notchDebug.patchSettings({ theme: 'midnight' }); __notchDebug.S.pinned = false; __notchDebug.collapse()`],
     ['header-stats', `__notchDebug.S.pinned = true; __notchDebug.expand('home')`],
-    ['settings-widgets2', `__notchDebug.setTab('settings'); document.querySelector('#setNav [data-sec=widgets]').click()`],
-    ['settings-side', `document.querySelector('#setNav [data-sec=side]').click()`],
+    ['settings-widgets2', settingsShot('widgets')],
+    ['settings-side', settingsShot('side')],
     ['side-pill', async () => {
       await js(`__notchDebug.S.pinned = false; __notchDebug.collapse()`);
       // pretend Chrome just came to the front on the notch's screen
@@ -1472,7 +2484,7 @@ async function runSnapshots(dir) {
       await js(`__notchDebug.addNotif({ id: 9100, app: 'Discord', title: 'Arjun', body: 'gg', time: Date.now(), icon: null })`);   // held, not shown
     }],
     ['game-open', `__notchDebug.S.pinned = true; __notchDebug.expand()`],
-    ['game-settings', `__notchDebug.setTab('settings'); document.querySelector('#setNav [data-sec=game]').click()`],
+    ['game-settings', settingsShot('game')],
     ['game-ask', async () => {
       await js(`__notchDebug.S.pinned = false; __notchDebug.collapse()`);
       send('game-ask', { exe: 'mystery.exe', name: 'Mystery Racer', path: '', icon: null });
@@ -1503,8 +2515,8 @@ async function runSnapshots(dir) {
       fs.writeFileSync(path.join(dir, 'phone-site.png'), img.toPNG());
       pw.destroy();
     }],
-    ['settings-deskeq', `__notchDebug.S.pinned = true; __notchDebug.patchSettings({ deskEq: true, deskEqIntensity: 70, deskEqHeight: 45 }); __notchDebug.expand('settings'); document.querySelector('#setNav [data-sec=deskeq]').click()`],
-    ['settings-deskeq-style', `__notchDebug.S.pinned = true; __notchDebug.expand('settings'); document.querySelector('#setNav [data-sec=deskeq]').click(); setTimeout(() => document.querySelector('.dd[data-dd=deskEqStyle] .dd-btn').click(), 300)`],
+    ['settings-deskeq', settingsShot('deskeq', `__notchDebug.patchSettings({ deskEq: true, deskEqIntensity: 70, deskEqHeight: 45 })`)],
+    ['settings-deskeq-style', settingsShot('deskeq', '', `setTimeout(() => document.querySelector('.dd[data-dd=deskEqStyle] .dd-btn').click(), 300)`)],
     ['deskeq-live', async () => {
       await js(`__notchDebug.S.pinned = false; __notchDebug.collapse()`);
       await wait(3500);
@@ -1537,7 +2549,7 @@ async function runSnapshots(dir) {
     ['theme-synthwave-sunset', `__notchDebug.patchSettings({ partyTheme: 'synthwave', vizPalette: 'sunset' })`],
     ['theme-warp', `__notchDebug.patchSettings({ partyTheme: 'warp', vizPalette: 'accent' })`],
     ['home-party-btn', `__notchDebug.S.pinned = true; __notchDebug.expand('home')`],
-    ['settings-party', `__notchDebug.setTab('settings'); document.querySelector('#setNav [data-sec=party]').click()`],
+    ['settings-party', settingsShot('party')],
     ['party-eq-styles', async () => {               // party mode's bottom equalizer follows the desktop eq's Style
       const prevStyle = settings.deskEqStyle || 'bars';
       await js(`__notchDebug.S.pinned = false; __notchDebug.collapse(); notch.partyStart()`);
@@ -1579,19 +2591,19 @@ async function runSnapshots(dir) {
     }],
     ['island-collapsed', `__notchDebug.patchSettings({ shape: 'island' }); __notchDebug.collapse()`],
     ['island-expanded', `__notchDebug.S.pinned = true; __notchDebug.expand('home')`],
-    ['island-settings', `__notchDebug.setTab('settings'); document.querySelector('#setNav [data-sec=general]').click()`],
+    ['island-settings', settingsShot('general')],
     ['notch-back', `__notchDebug.S.pinned = false; __notchDebug.patchSettings({ shape: 'notch' }); __notchDebug.collapse()`],
     ['orb-accent', `__notchDebug.patchSettings({ artFx: 'orb', vizPalette: 'accent', accentMode: 'purple' }); __notchDebug.collapse()`],
     ['orb-rainbow', `__notchDebug.patchSettings({ vizPalette: 'rainbow' })`],
     ['sun-rainbow', `__notchDebug.patchSettings({ artFx: 'sun' })`],
     ['home-rainbow', `__notchDebug.S.pinned = true; __notchDebug.expand('home')`],
-    ['settings-custom', `__notchDebug.patchSettings({ vizPalette: 'custom', vizCustom: ['#ff3787', '#ffd60a', '#40c8e0'], vizCustomCount: 3 }); __notchDebug.setTab('settings'); document.querySelector('#setNav [data-sec=look]').click()`],
+    ['settings-custom', settingsShot('look', `__notchDebug.patchSettings({ vizPalette: 'custom', vizCustom: ['#ff3787', '#ffd60a', '#40c8e0'], vizCustomCount: 3 })`)],
     ['home-custom', `__notchDebug.setTab('home')`],
     ['orb-1', `__notchDebug.patchSettings({ artFx: 'orb' }); __notchDebug.collapse()`],
     ['orb-2', `new Promise(r => setTimeout(r, 170))`],
     ['orb-3', `new Promise(r => setTimeout(r, 330))`],
     ['orb-4', `new Promise(r => setTimeout(r, 90))`],
-    ['settings-fx', `__notchDebug.S.pinned = true; __notchDebug.expand('settings'); document.querySelector('#setNav [data-sec=look]').click()`],
+    ['settings-fx', settingsShot('look')],
     ['spark-1', `__notchDebug.collapse()`],
     ['spark-2', `new Promise(r => setTimeout(r, 170))`],
     ['spark-3', `new Promise(r => setTimeout(r, 330))`],
@@ -1621,7 +2633,7 @@ async function runSnapshots(dir) {
       const qr = await require('qrcode').toDataURL('http://192.168.1.42:52814/3f9c1a7be2d04c51a8e6f0b2d9c47e15', { margin: 1, width: 360 });
       return js(`applyPhone(${JSON.stringify({ running: true, qr, url: 'http://192.168.1.42:52814/…', network: 'Wi-Fi', received: 0 })}); showPhonePanel(true)`);
     }],
-    ['settings-live', `applyPhone({running:false}); __notchDebug.setTab('settings'); document.querySelector('#setNav [data-sec=live]').click()`],
+    ['settings-live', settingsShot('live', `applyPhone({running:false})`)],
     ['tools-quiet', `__notchDebug.setTab('tools')`],
     ['apps-added', `(async () => { let s = await notch.addShortcut({ target: 'C:\\\\Windows\\\\System32\\\\notepad.exe' }); s = await notch.addShortcut({ target: 'github.com' }); s = await notch.addShortcut({ name: 'Calendar', target: 'https://calendar.google.com' }); __notchDebug.S.settings = s; renderApps(); __notchDebug.expand('apps'); })()`],
     ['apps-hold', `(() => { ['pointerdown','mousedown','mouseup','click','dblclick'].forEach(t => document.addEventListener(t, e => console.warn('EV ' + t + ' ' + e.button + ' ' + (e.target.className || e.target.tagName) + ' @' + Math.round(e.clientX) + ',' + Math.round(e.clientY)), true)); __notchDebug.expand('apps'); __notchDebug.S.pinned = true; setTimeout(() => { const r = document.querySelector('.app-tile[data-action=calculator]').getBoundingClientRect(); console.warn('TILE ' + JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2, zoom: window.devicePixelRatio })); }, 600); })()`],
@@ -1649,15 +2661,10 @@ async function runSnapshots(dir) {
     ['stacked-system', `__notchDebug.setTab('system')`],
     ['stacked-shelf', `__notchDebug.setTab('shelf')`],
     ['stacked-alerts', `__notchDebug.setTab('alerts')`],
-    ['stacked-settings', `__notchDebug.setTab('settings')`],
-    // the panel must settle (no resize loop) on every settings section, e.g. Side mode
-    ['stacked-settings-side', `document.querySelector('#setNav [data-sec=side]').click();
-      new Promise(r => { const hs = []; const t = setInterval(() => { hs.push(Math.round(document.getElementById('island').getBoundingClientRect().height)); if (hs.length >= 20) { clearInterval(t); console.warn('SETTLE ' + hs.join(' ')); r(); } }, 100); })`],
     // a page's content is equally wide with or without a scrollbar (else the panel can resize-loop)
-    ['stacked-width-check', `(() => { const p = document.querySelector('.page[data-page=settings]'); const w = () => p.clientWidth - parseFloat(getComputedStyle(p).paddingRight);
+    ['stacked-width-check', `(() => { const p = document.querySelector('.page.active'); const w = () => p.clientWidth - parseFloat(getComputedStyle(p).paddingRight);
       const a = w(); p.style.bottom = '60%'; const b = w(), scrolls = p.scrollHeight > p.clientHeight; p.style.bottom = '';
       console.warn('WIDTH ' + JSON.stringify({ normal: a, withScrollbar: b, scrolls, overview: document.getElementById('ov').offsetWidth })); })()`],
-    ['stacked-settings-look', `document.querySelector('#setNav [data-sec=look]').click()`],
     ['stacked-side', async () => {
       await js(`__notchDebug.S.pinned = false; __notchDebug.collapse()`);
       sideTestNoWatch = true;
@@ -1683,7 +2690,13 @@ app.on('second-instance', () => { userHidden = false; refreshVisibility(); send(
 app.on('before-quit', () => {
   app.isQuitting = true;
   globalShortcut.unregisterAll();
+  if (wpHost) { const h = wpHost; stopWpHost(); try { h.kill(); } catch { /* gone */ } bridgeCmd('wp refresh'); }   // the normal wallpaper comes back
+  for (const e of dockWins) dockClose(e);                // the Windows taskbar comes back (the bridge also does it on exit)
+  if (tbApplied) bridgeCmd(settings.tbOrig != null ? `tb restore ${settings.tbOrig}` : 'tb show');
+  // Start / search layout back to the user's own (tbOrigLayout is kept: if the bridge dies before doing it, the next start does)
+  if (tbLayoutSent) bridgeCmd(settings.tbOrigLayout ? `tb layout-restore ${settings.tbOrigLayout.al} ${settings.tbOrigLayout.mode}` : 'tb layout-back');
   if (bridge) { try { bridge.stdin.end(); bridge.kill(); } catch { /* ignore */ } }
   phone.stop('quit');
+  search.quit();
 });
 app.on('window-all-closed', () => app.quit());

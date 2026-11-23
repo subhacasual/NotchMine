@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src 'self' blob: mediastream:">
+  <title>NotchMine Ambient</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
+    body { opacity: 0; transition: opacity .6s ease; font: 500 13px/1.3 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+    body.on { opacity: 1; }
+    body.peek { opacity: 0; transition: opacity .35s ease; }
+    #back { position: fixed; inset: 0; background: #000; }
+    canvas { position: fixed; left: 0; width: 100%; display: block; }
+    #bg { top: 0; height: 100%; }
+    #eq { bottom: 0; height: 70%; }
+    #note { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); padding: 8px 16px; border-radius: 999px;
+            background: rgba(0, 0, 0, .55); color: rgba(255, 255, 255, .85); opacity: 0; transition: opacity .5s ease; white-space: nowrap; }
+    #note.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div id="back"></div>
+  <canvas id="bg"></canvas>
+  <canvas id="eq"></canvas>
+  <div id="note"></div>
+  <script src="eqstyles.js"></script>
+  <script src="audiofeed.js"></script>
+  <script src="ambient.js"></script>
+</body>
+</html>

@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src https://geocoding-api.open-meteo.com">
+  <title>NotchMine Settings</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <!-- ============ sidebar ============ -->
+  <aside class="side">
+    <div class="brand"><span class="brand-pill"></span><span>NotchMine</span></div>
+    <label class="search">
+      <i data-icon="search"></i>
+      <input type="search" id="search" placeholder="Find a setting" spellcheck="false" autocomplete="off">
+    </label>
+    <nav class="set-nav" id="setNav">
+      <div class="nav-h">Notch</div>
+      <button data-sec="general"><i data-icon="gear"></i><span>General</span></button>
+      <button data-sec="look"><i data-icon="palette"></i><span>Appearance</span></button>
+      <button data-sec="widgets"><i data-icon="grid"></i><span>Widgets</span></button>
+      <button data-sec="search"><i data-icon="search"></i><span>Search</span></button>
+      <button data-sec="live"><i data-icon="sparkle"></i><span>Live activities</span></button>
+      <button data-sec="side"><i data-icon="sideways"></i><span>Side mode</span></button>
+      <button data-sec="game"><i data-icon="gamepad"></i><span>Game mode</span></button>
+      <div class="nav-h">Desktop</div>
+      <button data-sec="taskbar"><i data-icon="tray"></i><span>Taskbar</span></button>
+      <button data-sec="wallpaper"><i data-icon="image"></i><span>Wallpaper</span></button>
+      <button data-sec="deskeq"><i data-icon="mixer"></i><span>Equalizer</span></button>
+      <button data-sec="ambient"><i data-icon="ambient"></i><span>Ambient screen</span></button>
+      <button data-sec="party"><i data-icon="music"></i><span>Party</span></button>
+    </nav>
+    <div class="side-foot" id="version"></div>
+  </aside>
+
+  <!-- ============ content ============ -->
+  <main class="main">
+    <div class="titlebar"></div>
+    <div class="scroll" id="scroll">
+      <div class="no-results" id="noResults" hidden>No settings match “<b id="noResultsQ"></b>”</div>
+
+      <!-- General -->
+      <section class="set-sec" data-sec="general">
+        <header class="sec-head"><h1>General</h1><p>How the notch starts, opens and where it sits.</p></header>
+        <div class="group">
+          <h2>Behaviour</h2>
+          <div class="set-row" title="How quickly the notch opens when the mouse touches it (or only on click)"><span>Open</span>
+            <span class="seg" data-seg="openDelay">
+              <button data-v="60">Fast</button><button data-v="140">Normal</button><button data-v="350">Slow</button><button data-v="-1">Click</button>
+            </span>
+          </div>
+          <label class="set-row" title="Scroll = volume · swipe sideways = skip · double-click = play/pause · middle-click = mute"><span>Gestures on the notch</span><input type="checkbox" class="switch" data-setting="gestures"></label>
+          <div class="set-row" title="While a movie, video or game fills the notch's screen. Fade: the notch shrinks to a faint thin line and comes back to normal when you hover it."><span>Full-screen apps</span>
+            <span class="seg" data-seg="fullscreenMode" data-type="str">
+              <button data-v="show">Show</button><button data-v="dim">Fade</button><button data-v="hide">Hide</button>
+            </span>
+          </div>
+          <div class="set-row" title="Tabs: one section at a time in a wide panel. Stacked: every section at once in a tall column; click a section's title for its full page."><span>Layout</span>
+            <span class="seg" data-seg="layout" data-type="str">
+              <button data-v="tabs">Tabs</button><button data-v="stacked">Stacked</button>
+            </span>
+          </div>
+        </div>
+        <div class="group">
+          <h2>Placement</h2>
+          <div class="set-row"><span>Shape</span>
+            <span class="seg" data-seg="shape" data-type="str">
+              <button data-v="notch" title="Glued to the top edge of the screen">Notch</button><button data-v="island" title="A floating pill just below the top edge">Island</button>
+            </span>
+          </div>
+          <div class="set-row" title="Or drag the pill (or the open panel's top bar). Island shape can go anywhere on the screen."><span>Position</span>
+            <span class="seg" data-seg="posX">
+              <button data-v="0">Left</button><button data-v="0.5">Center</button><button data-v="1">Right</button>
+            </span>
+          </div>
+          <div class="set-row" id="screenRow"><span>Screen</span><span class="seg" data-seg="displayId" id="screenSeg"></span></div>
+        </div>
+        <div class="group">
+          <h2>Clock</h2>
+          <label class="set-row"><span>24-hour clock</span><input type="checkbox" class="switch" data-setting="use24h"></label>
+          <label class="set-row"><span>Show seconds</span><input type="checkbox" class="switch" data-setting="showSeconds"></label>
+        </div>
+        <div class="group">
+          <h2>App</h2>
+          <label class="set-row"><span>Launch at login</span><input type="checkbox" class="switch" data-setting="launchAtLogin"></label>
+          <div class="set-row"><span>Quit NotchMine</span><button class="pill-btn danger small" id="quitBtn"><i data-icon="power"></i><span>Quit</span></button></div>
+        </div>
+      </section>
+
+      <!-- Appearance -->
+      <section class="set-sec" data-sec="look">
+        <header class="sec-head"><h1>Appearance</h1><p>Style, size and colours of the notch and its effects.</p></header>
+        <div class="group">
+          <h2>Style</h2>
+          <div class="themes" id="themePick">
+            <button data-theme="midnight"><span class="tp tp-midnight"></span>Midnight</button>
+            <button data-theme="graphite"><span class="tp tp-graphite"></span>Graphite</button>
+            <button data-theme="glass"><span class="tp tp-glass"></span>Glass</button>
+            <button data-theme="aurora"><span class="tp tp-aurora"></span>Aurora</button>
+            <button data-theme="weather" title="The notch's colours follow the weather outside: warm when sunny, blue when it rains…"><span class="tp tp-weather"></span>Weather</button>
+          </div>
+          <div class="set-row"><span>Size</span>
+            <span class="seg" data-seg="scale">
+              <button data-v="0.9">S</button><button data-v="1">M</button><button data-v="1.15">L</button><button data-v="1.3">XL</button>
+            </span>
+          </div>
+        </div>
+        <div class="group">
+          <h2>Colours</h2>
+          <div class="set-label">Accent colour</div>
+          <div class="accents" id="accentPick">
+            <button data-accent="auto" title="From album art" class="acc-auto">A</button>
+            <button data-accent="purple" title="Purple"></button>
+            <button data-accent="blue" title="Blue"></button>
+            <button data-accent="teal" title="Teal"></button>
+            <button data-accent="green" title="Green"></button>
+            <button data-accent="orange" title="Orange"></button>
+            <button data-accent="pink" title="Pink"></button>
+            <button data-accent="red" title="Red"></button>
+            <label class="acc-custom" title="Any colour you like"><input type="color" id="accentCustom"><span>+</span></label>
+          </div>
+          <div class="set-label" title="Equalizer bars, spectrum, glow, orb and sparks">Visualizer colours</div>
+          <div class="viz-pick" id="vizPick">
+            <button data-viz="accent" title="Follow the accent colour">A</button>
+            <button data-viz="rainbow" title="Rainbow"></button>
+            <button data-viz="sunset" title="Sunset"></button>
+            <button data-viz="ocean" title="Ocean"></button>
+            <button data-viz="neon" title="Neon"></button>
+            <button data-viz="fire" title="Fire"></button>
+            <button data-viz="aurora" title="Aurora"></button>
+            <button data-viz="custom" title="Your own mix" class="viz-custom-btn"><i data-icon="palette"></i></button>
+          </div>
+          <div class="viz-mixer" id="vizMixer">
+            <span class="muted">Mix</span>
+            <input type="color" class="vz-col" data-i="0">
+            <input type="color" class="vz-col" data-i="1">
+            <input type="color" class="vz-col" data-i="2">
+            <span class="seg vz-count" id="vizCount"><button data-n="1">1</button><button data-n="2">2</button><button data-n="3">3</button></span>
+          </div>
+        </div>
+        <div class="group">
+          <h2>Effects</h2>
+          <div class="set-row"><span>Music icon effect</span>
+            <span class="seg fx-pick" id="fxPick">
+              <button data-fx="sun" title="The icon glows and sheds sparks like a sun">Sun rays</button><button data-fx="orb" title="A burning holographic globe, from Friday">Orb</button><button data-fx="none" title="Plain album art">Off</button>
+            </span>
+          </div>
+          <div class="slider-set" title="How strongly the sun / orb reacts to the bass, beats and vocals. Higher: lighter beats count, more sparks, faster spin. Lower: calmer.">
+            <div class="slider-label"><span>Effect sensitivity</span><b id="fxSensVal">50%</b></div>
+            <input type="range" min="0" max="100" data-range="fxSensitivity" data-out="fxSensVal">
+          </div>
+          <label class="set-row" title="Equalizer bars react to what your PC is actually playing."><span>Real audio visualizer</span><input type="checkbox" class="switch" data-setting="visualizer"></label>
+          <label class="set-row" title="When it's raining or snowing outside, it rains or snows across the pill (with or without music). While it rains, it also rains all over the open panel."><span>Rain &amp; snow animation</span><input type="checkbox" class="switch" data-setting="wxPill"></label>
+        </div>
+      </section>
+
+      <!-- Widgets -->
+      <section class="set-sec" data-sec="widgets">
+        <header class="sec-head"><h1>Widgets</h1><p>Weather, focus timer, clipboard, notifications and what the resting pill shows.</p></header>
+        <div class="group">
+          <h2>Weather</h2>
+          <div class="set-row city-row">
+            <span>Weather city</span>
+            <span class="city-input">
+              <input type="text" id="setCity" placeholder="City name">
+              <button class="pill-btn primary small" id="setCitySave">Save</button>
+            </span>
+          </div>
+          <div class="set-hint" id="cityHint"></div>
+          <div class="set-credit">Weather data by <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo.com</a> (CC BY 4.0)</div>
+        </div>
+        <div class="group">
+          <h2>Idle pill</h2>
+          <div class="set-label" title="Shown in the pill when no music is playing">Idle pill shows</div>
+          <div class="stat-pick wrap" id="idlePick">
+            <button data-stat="date">Date</button><button data-stat="weather">Weather</button><button data-stat="cpu">CPU</button><button data-stat="ram">RAM</button><button data-stat="gpu">GPU</button><button data-stat="net">Network</button><button data-stat="battery">Battery</button><button data-stat="alerts">Alerts</button>
+          </div>
+          <label class="set-row" title="Only sun/moon, time, date and weather (plus unread alerts and battery when unplugged). The rest shows in the opened panel (or on hover when Open is set to Click)."><span>Minimal (details on hover)</span><input type="checkbox" class="switch" data-setting="idleMinimal"></label>
+        </div>
+        <div class="group">
+          <h2>Notifications</h2>
+          <label class="set-row"><span>Show Windows notifications</span><input type="checkbox" class="switch" data-setting="notifications"></label>
+          <label class="set-row" title="Notifications are read from Windows Action Center on this PC only. Nothing leaves your computer."><span>Hide message text in pop-ups</span><input type="checkbox" class="switch" data-setting="notifHideText"></label>
+        </div>
+        <div class="group">
+          <h2>Focus &amp; clipboard</h2>
+          <label class="set-row"><span>Focus / break minutes</span>
+            <span class="num-pair">
+              <input type="number" id="setWork" min="1" max="180" title="Focus minutes">
+              <input type="number" id="setBreak" min="1" max="60" title="Break minutes">
+            </span>
+          </label>
+          <label class="set-row"><span>Clipboard history</span><input type="checkbox" class="switch" data-setting="clipboardHistory"></label>
+        </div>
+      </section>
+
+      <!-- Search -->
+      <section class="set-sec" data-sec="search">
+        <header class="sec-head"><h1>Search</h1><p>Press <kbd id="hkTxt">Ctrl+Alt+Space</kbd> anywhere and the notch turns into a search bar for apps, files, maths, unit conversion, clipboard history, commands and the web. <kbd>Tab</kbd> switches between All, Apps, Files and Clipboard. What you open most comes first.</p></header>
+        <div class="group">
+          <h2>Search box</h2>
+          <label class="set-row"><span>Search box</span><input type="checkbox" class="switch" data-setting="searchOn"></label>
+          <div class="set-row" title="Click, then press the keys you want: Ctrl or Alt with a key (or a function key on its own). Esc cancels."><span>Shortcut</span>
+            <span class="hk-pick"><button class="pill-btn small" id="hkBtn" type="button">Ctrl+Alt+Space</button><button class="pill-btn small" id="hkReset" type="button" title="Back to Ctrl+Alt+Space"><i data-icon="reset"></i></button></span>
+          </div>
+          <div class="set-hint" id="hkNote"></div>
+          <div class="set-row"><span>Try it now</span><button class="pill-btn primary small" id="searchGo" type="button"><i data-icon="search"></i><span>Open search</span></button></div>
+        </div>
+        <div class="group">
+          <h2>Web search</h2>
+          <div class="set-row" title="Used when you pick “Search … for” at the bottom of the results. It opens in your default browser."><span>Search engine</span>
+            <div class="dd" data-dd="searchEngine">
+              <button class="dd-btn" type="button"><span class="dd-val">Google</span></button>
+              <div class="dd-list" role="listbox">
+                <button data-v="google">Google</button>
+                <button data-v="bing">Bing</button>
+                <button data-v="duckduckgo">DuckDuckGo</button>
+                <button data-v="brave">Brave</button>
+                <button data-v="ecosia">Ecosia</button>
+              </div>
+            </div>
+          </div>
+          <label class="set-row" title="When you type a question (“capital of india”, “how tall is mount everest”), the search engine's own results page appears right in the box after you stop typing, with its answer at the top. Your question is sent to the search engine you picked. A click on a result opens it in your browser."><span>Answer questions in the box</span><input type="checkbox" class="switch" data-setting="searchPreview"></label>
+        </div>
+        <div class="group">
+          <h2>Files &amp; clipboard</h2>
+          <label class="set-row" title="By name, on every drive. Everything finds them instantly; without it, NotchMine uses the Windows search index plus its own list of the drives the index skips (slower, and refreshed every 10 minutes)."><span>Search files and folders</span><input type="checkbox" class="switch" data-setting="searchFiles"></label>
+          <div class="set-row"><span class="row-txt"><span>Everything</span><small id="evTxt">Checking…</small></span><span id="evBtns"></span></div>
+          <label class="set-row" title="Things you copied lately (kept in memory only). Pick one to copy it again."><span>Clipboard history in results</span><input type="checkbox" class="switch" data-setting="searchClipboard"></label>
+        </div>
+      </section>
+
+      <!-- Live activities -->
+      <section class="set-sec" data-sec="live">
+        <header class="sec-head"><h1>Live activities</h1><p>Pop-ups and extras the notch shows by itself.</p></header>
+        <div class="group">
+          <h2>Music</h2>
+          <label class="set-row"><span>Synced lyrics</span><input type="checkbox" class="switch" data-setting="lyrics"></label>
+          <label class="set-row"><span>Lyrics in the pill</span><input type="checkbox" class="switch" data-setting="lyricsInPill"></label>
+          <label class="set-row" title="When the player (e.g. a browser) shares no cover, look it up on iTunes. Only the song title and artist are sent."><span>Find missing album art online</span><input type="checkbox" class="switch" data-setting="onlineArtwork"></label>
+          <div class="set-note">Lyrics come from lrclib.net (free, no account); only the song title and artist are sent. Lyrics belong to their songwriters and publishers.</div>
+        </div>
+        <div class="group">
+          <h2>Pop-ups</h2>
+          <label class="set-row"><span>Camera / mic in-use dots</span><input type="checkbox" class="switch" data-setting="privacyDots"></label>
+          <label class="set-row"><span>Quiet pop-ups while focusing</span><input type="checkbox" class="switch" data-setting="focusSilence"></label>
+          <label class="set-row"><span>Catch screenshots</span><input type="checkbox" class="switch" data-setting="catchScreenshots"></label>
+          <label class="set-row"><span>Finished downloads</span><input type="checkbox" class="switch" data-setting="trackDownloads"></label>
+          <label class="set-row"><span>USB, headphones, Caps Lock</span><input type="checkbox" class="switch" data-setting="devicePopups"></label>
+        </div>
+      </section>
+
+      <!-- Side mode -->
+      <section class="set-sec" data-sec="side">
+        <header class="sec-head"><h1>Side mode</h1><p>Moves to the right edge while one of these apps is maximized in front, so it never covers tabs. Hover it to open the panel; it goes back as soon as that window is minimized, made smaller or closed, or you switch apps.</p></header>
+        <div class="group">
+          <h2>Side mode</h2>
+          <label class="set-row"><span>Side mode</span><input type="checkbox" class="switch" data-setting="sideMode"></label>
+          <label class="set-row" title="While it sits on the side and the mouse isn't on it, the notch turns almost invisible so it doesn't cover the page. Touch it with the mouse and it comes right back. Pop-ups and the open panel always show normally."><span>See-through when idle</span><input type="checkbox" class="switch" data-setting="sideFade"></label>
+          <div class="slider-set" title="How see-through the pill's dark background gets while the mouse is away. 100% = gone completely.">
+            <div class="slider-label"><span>Background transparency</span><b id="sideFadeBgVal">95%</b></div>
+            <input type="range" min="0" max="100" data-range="sideFadeBg" data-out="sideFadeBgVal">
+          </div>
+          <div class="slider-set" title="How see-through the icons, time and stats get while the mouse is away. 100% = gone completely (it still opens when the mouse reaches it).">
+            <div class="slider-label"><span>Icons &amp; info transparency</span><b id="sideFadeFgVal">85%</b></div>
+            <input type="range" min="0" max="100" data-range="sideFadeFg" data-out="sideFadeFgVal">
+          </div>
+        </div>
+        <div class="group">
+          <h2>Apps that send it to the side</h2>
+          <div class="side-list" id="sideList"></div>
+          <div class="set-label small">Recently used: click to add</div>
+          <div class="side-list recent" id="sideRecent"></div>
+        </div>
+      </section>
+
+      <!-- Game mode -->
+      <section class="set-sec" data-sec="game">
+        <header class="sec-head"><h1>Game mode</h1><p>While a game is in front, the notch moves to the top-right corner and shows your game stats. Click it or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>G</kbd> to open it.</p></header>
+        <div class="group">
+          <h2>Game mode</h2>
+          <label class="set-row"><span>Game mode</span><input type="checkbox" class="switch" data-setting="gameMode"></label>
+          <label class="set-row" title="Uses Windows' own list of games, game library folders (Steam, Epic, Xbox, EA, Riot…) and asks about unknown full-screen apps that keep the graphics card busy"><span>Find games by themselves</span><input type="checkbox" class="switch" data-setting="gameAuto"></label>
+          <label class="set-row" title="Notifications still arrive in Alerts; you get a count when you stop playing"><span>Hold pop-ups while playing</span><input type="checkbox" class="switch" data-setting="gameQuiet"></label>
+          <label class="set-row" title="Posters come from Steam's own files on this PC. When those have none, look the game up on the Steam store: only the game's name is sent."><span>Find game posters online</span><input type="checkbox" class="switch" data-setting="gameArtOnline"></label>
+        </div>
+        <div class="group">
+          <h2>Games</h2>
+          <div class="set-label">Always a game</div>
+          <div class="side-list" id="gameList"></div>
+          <div class="set-label small">Never a game</div>
+          <div class="side-list" id="notGameList"></div>
+          <div class="set-label small">Recently used: click to add as a game</div>
+          <div class="side-list recent" id="gameRecent"></div>
+        </div>
+      </section>
+
+      <!-- Taskbar -->
+      <section class="set-sec" data-sec="taskbar">
+        <header class="sec-head"><h1>Taskbar</h1><p>Swap the Windows taskbar for a NotchMine dock. Also in the tray menu, and with <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> from anywhere. If NotchMine closes, the Windows taskbar comes back by itself.</p></header>
+        <div class="group">
+          <h2>Style</h2>
+          <div class="tb-styles" id="tbStyles">
+            <button data-tb="windows"><span class="tbp tbp-win"><i class="full"></i></span>Windows</button>
+            <button data-tb="dockeq"><span class="tbp"><i class="bars"></i><i class="cl"></i><i class="pill"></i><i class="cr"></i></span>Dock + music</button>
+            <button data-tb="dock"><span class="tbp"><i class="pill"></i><i class="cr"></i></span>Floating dock</button>
+            <button data-tb="bar"><span class="tbp tbp-bar"><i class="full"></i></span>Full-width bar</button>
+          </div>
+          <button class="pill-btn tb-back" id="tbBack"><i data-icon="reset"></i><span id="tbBackTxt">Back to the Windows taskbar</span></button>
+        </div>
+        <div class="group" id="tbOpts">
+          <h2>Dock</h2>
+          <label class="set-row" title="At rest it shows only the apps that are open; hover it to see search, task view and every pinned app"><span>Open the dock on hover</span><input type="checkbox" class="switch" data-setting="tbHover"></label>
+          <div class="set-row" title="Puts back exactly the apps pinned on the Windows taskbar, in the same order, Store apps like WhatsApp and Teams included. Apps you pinned or unpinned in the dock since then are replaced."><span>Pinned apps</span><button class="pill-btn small" id="tbPinsReset"><i data-icon="reset"></i><span>Copy from Windows taskbar</span></button></div>
+          <div class="set-row"><span>Dock size</span>
+            <span class="seg" data-seg="tbSize" data-type="str"><button data-v="s">S</button><button data-v="m">M</button><button data-v="l">L</button></span>
+          </div>
+          <label class="set-row" title="The song, with play / pause / skip. Dock + music: bottom-left corner. Floating dock: bottom-right, next to Wi-Fi and sound."><span>Now-playing pill</span><input type="checkbox" class="switch" data-setting="tbNp"></label>
+          <label class="set-row" id="tbEqRow" title="While music plays: bars rising behind the dock (Dock + music), or the full-width bar's neon edge dancing to the music"><span>Equalizer behind the dock</span><input type="checkbox" class="switch" data-setting="tbEq"></label>
+          <label class="set-row" id="tbFloatEqRow" title="While music plays: bars rising along the bottom of the screen, behind the floating dock" hidden><span>Bottom equalizer</span><input type="checkbox" class="switch" data-setting="tbFloatEq"></label>
+          <div class="set-row"><span>Screens</span>
+            <span class="seg" data-seg="tbScreens" data-type="str"><button data-v="all">All</button><button data-v="main">Main</button></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Live wallpaper -->
+      <section class="set-sec" data-sec="wallpaper">
+        <header class="sec-head"><h1>Wallpaper</h1><p>An animated wallpaper behind your desktop icons. Off brings your normal wallpaper back.</p></header>
+        <div class="group">
+          <h2>Live wallpaper</h2>
+          <label class="set-row"><span>Live wallpaper</span><input type="checkbox" class="switch" data-setting="wpOn"></label>
+          <div class="set-row" title="Animated sky: a drawn scene for each weather. My wallpaper: your own Windows wallpaper stays, with the rain, snow, sun rays, stars or music bars on top."><span>Background</span>
+            <span class="seg" data-seg="wpBack" data-type="str">
+              <button data-v="scene">Animated sky</button><button data-v="mine">My wallpaper</button>
+            </span>
+          </div>
+          <div class="wp-mine" id="wpMine" hidden>
+            <span class="wp-mine-img" id="wpMineImg"></span>
+            <span class="wp-mine-txt"><b id="wpMineName">Your wallpaper</b><small>Follows along when you change it in Windows. The effects below play on top of it.</small></span>
+          </div>
+          <div class="set-row"><span>Effects</span>
+            <span class="seg" data-seg="wpMode" data-type="str">
+              <button data-v="auto" title="Follows the weather in your city">Automatic</button><button data-v="manual" title="Stays on the style you pick">Choose myself</button>
+            </span>
+          </div>
+          <div id="wpAutoBox">
+            <div class="wp-now"><span class="wp-now-ic" id="wpNowIc"></span><span id="wpNowTxt">Set your city in Widgets to follow the weather</span></div>
+            <div class="set-row"><span>Clear nights</span>
+              <span class="seg" data-seg="wpNight" data-type="str"><button data-v="night">Stars</button><button data-v="aurora">Aurora</button></span>
+            </div>
+          </div>
+          <div class="wp-styles" id="wpStyles" hidden>
+            <button data-wps="rain"><span class="wsw wsw-rain"></span>Rain</button>
+            <button data-wps="storm"><span class="wsw wsw-storm"></span>Storm</button>
+            <button data-wps="snow"><span class="wsw wsw-snow"></span>Snow</button>
+            <button data-wps="sunny"><span class="wsw wsw-sunny"></span>Sunny</button>
+            <button data-wps="cloudy"><span class="wsw wsw-cloudy"></span>Cloudy</button>
+            <button data-wps="night"><span class="wsw wsw-night"></span>Starry night</button>
+            <button data-wps="aurora"><span class="wsw wsw-aurora"></span>Aurora</button>
+            <button data-wps="music"><span class="wsw wsw-music"></span>Music</button>
+          </div>
+          <div class="set-row"><span>Screens</span>
+            <span class="seg" data-seg="wpScreens" data-type="str"><button data-v="all">All</button><button data-v="notch">Notch's</button></span>
+          </div>
+        </div>
+        <div class="group">
+          <h2>Look &amp; power</h2>
+          <div class="slider-set">
+            <div class="slider-label"><span>Amount</span><b id="wpAmtVal">60%</b></div>
+            <input type="range" min="0" max="100" data-range="wpAmount" data-out="wpAmtVal">
+          </div>
+          <div class="slider-set" title="Darkens the wallpaper so desktop icons stay easy to read">
+            <div class="slider-label"><span>Dim</span><b id="wpDimVal">15%</b></div>
+            <input type="range" min="0" max="100" data-range="wpDim" data-out="wpDimVal">
+          </div>
+          <label class="set-row"><span>Pulse with the music</span><input type="checkbox" class="switch" data-setting="wpBeat"></label>
+          <label class="set-row" title="Stops drawing (no GPU use) while a full-screen app, a game or a maximized window covers that screen"><span>Pause when covered</span><input type="checkbox" class="switch" data-setting="wpPauseFs"></label>
+          <label class="set-row" title="Shows a still frame while the laptop runs on battery"><span>Hold still on battery</span><input type="checkbox" class="switch" data-setting="wpBatteryStill"></label>
+        </div>
+      </section>
+
+      <!-- Desktop equalizer -->
+      <section class="set-sec" data-sec="deskeq">
+        <header class="sec-head"><h1>Desktop equalizer</h1><p>See-through and click-through bars along the bottom of the screen: they never get in the way of your mouse. They show only while music plays and hide in full-screen apps.</p></header>
+        <div class="group">
+          <h2>Equalizer</h2>
+          <label class="set-row"><span>Desktop equalizer</span><input type="checkbox" class="switch" data-setting="deskEq"></label>
+          <div class="set-row"><span>Style</span>
+            <div class="dd" data-dd="deskEqStyle">
+              <button class="dd-btn" type="button"><span class="dd-val">Bars</span></button>
+              <div class="dd-list" role="listbox">
+                <button data-v="bars" title="Classic bars with falling peak caps">Bars</button>
+                <button data-v="line" title="A glowing line tracing the spectrum">Line</button>
+                <button data-v="wave" title="The live sound wave, like an oscilloscope">Wave</button>
+                <button data-v="dots" title="Retro LED dot columns">Dots</button>
+                <button data-v="hills" title="Soft layered hills that rise with the music">Hills</button>
+                <button data-v="reflect" title="Bars growing up and down from a centre line, mirrored like on water">Reflect</button>
+                <button data-v="blocks" title="Segmented VU-meter blocks, hotter towards the top">Blocks</button>
+                <button data-v="neon" title="Hollow glowing neon-tube bars">Neon</button>
+                <button data-v="ridges" title="Stacked ridge lines: the last moments of music rolling back into the distance">Ridges</button>
+                <button data-v="fountain" title="Sparks shooting up as high as each band, falling back down">Fountain</button>
+                <button data-v="bubbles" title="Bubbles rising from the bottom, bigger on louder bands">Bubbles</button>
+                <button data-v="city" title="A night skyline: buildings rise with the music, windows light up">City</button>
+                <button data-v="aurora" title="Soft shimmering curtains of light">Aurora</button>
+                <button data-v="heartbeat" title="A heart-monitor line that spikes on every beat">Heartbeat</button>
+                <button data-v="lasers" title="Thin laser rays fanning up from the bottom">Lasers</button>
+              </div>
+            </div>
+          </div>
+          <div class="set-row"><span>Position</span>
+            <span class="seg" data-seg="deskEqPos" data-type="str">
+              <button data-v="above" title="Sits on top of the taskbar">Above taskbar</button><button data-v="bottom" title="Starts at the very bottom, over the taskbar">Screen bottom</button>
+            </span>
+          </div>
+          <div class="set-row"><span>Screens</span>
+            <span class="seg" data-seg="deskEqScreens" data-type="str">
+              <button data-v="notch">Notch's</button><button data-v="all">All</button>
+            </span>
+          </div>
+          <label class="set-row"><span>Mirror (bass in the middle)</span><input type="checkbox" class="switch" data-setting="deskEqMirror"></label>
+        </div>
+        <div class="group">
+          <h2>Size</h2>
+          <div class="slider-set">
+            <div class="slider-label"><span>Intensity</span><b id="eqIntVal">60%</b></div>
+            <input type="range" min="0" max="100" data-range="deskEqIntensity" data-out="eqIntVal">
+          </div>
+          <div class="slider-set">
+            <div class="slider-label"><span>Height</span><b id="eqHVal">45%</b></div>
+            <input type="range" min="0" max="100" data-range="deskEqHeight" data-out="eqHVal">
+          </div>
+        </div>
+      </section>
+
+      <!-- Ambient screen -->
+      <section class="set-sec" data-sec="ambient">
+        <header class="sec-head"><h1>Ambient screen</h1><p>Watching a movie full screen on one screen? Your other screens glow in its colours, changing with every scene, with an equalizer that moves to its sound. Click-through, and it fades away while your mouse is on that screen.</p></header>
+        <div class="amb-need" id="ambNeed" hidden><i data-icon="ambient"></i><span>This needs a second screen. Connect one and it&rsquo;s ready to go.</span></div>
+        <div class="group">
+          <h2>Ambient screen</h2>
+          <label class="set-row"><span>Ambient screen</span><input type="checkbox" class="switch" data-setting="ambient"></label>
+          <div class="set-row" title="With full-screen video: while a movie, video or anything else fills one screen. Always: also follows your main screen when nothing is full screen."><span>Turn on</span>
+            <span class="seg" data-seg="ambTrigger" data-type="str">
+              <button data-v="fullscreen">With full-screen video</button><button data-v="always">Always</button>
+            </span>
+          </div>
+          <div class="set-row"><span>Look</span>
+            <div class="dd" data-dd="ambStyle">
+              <button class="dd-btn" type="button"><span class="dd-val">Glow</span></button>
+              <div class="dd-list" role="listbox">
+                <button data-v="glow" title="The movie's colours spill across the screen, mirrored from the edge next to it">Glow</button>
+                <button data-v="reflect" title="A soft, blurred mirror image of the movie itself">Reflection</button>
+                <button data-v="mood" title="The scene's three main colours, slowly drifting">Mood</button>
+                <button data-v="edge" title="Only a band of light along the edge next to the movie; the rest stays dark">Edge light</button>
+                <button data-v="lava" title="Big soft blobs in the scene's colours that swell with the sound">Lava</button>
+                <button data-v="solid" title="The whole screen in the scene's main colour">Solid colour</button>
+              </div>
+            </div>
+          </div>
+          <div class="set-row"><span>Equalizer</span>
+            <div class="dd" data-dd="ambEq">
+              <button class="dd-btn" type="button"><span class="dd-val">Bars</span></button>
+              <div class="dd-list" role="listbox">
+                <button data-v="none" title="Just the colours">Off</button>
+                <button data-v="bars" title="Classic bars with falling peak caps">Bars</button>
+                <button data-v="line" title="A glowing line tracing the spectrum">Line</button>
+                <button data-v="wave" title="The live sound wave, like an oscilloscope">Wave</button>
+                <button data-v="dots" title="Retro LED dot columns">Dots</button>
+                <button data-v="hills" title="Soft layered hills that rise with the music">Hills</button>
+                <button data-v="reflect" title="Bars growing up and down from a centre line, mirrored like on water">Reflect</button>
+                <button data-v="blocks" title="Segmented VU-meter blocks, hotter towards the top">Blocks</button>
+                <button data-v="neon" title="Hollow glowing neon-tube bars">Neon</button>
+                <button data-v="ridges" title="Stacked ridge lines: the last moments of music rolling back into the distance">Ridges</button>
+                <button data-v="fountain" title="Sparks shooting up as high as each band, falling back down">Fountain</button>
+                <button data-v="bubbles" title="Bubbles rising from the bottom, bigger on louder bands">Bubbles</button>
+                <button data-v="city" title="A night skyline: buildings rise with the music, windows light up">City</button>
+                <button data-v="aurora" title="Soft shimmering curtains of light">Aurora</button>
+                <button data-v="heartbeat" title="A heart-monitor line that spikes on every beat">Heartbeat</button>
+                <button data-v="lasers" title="Thin laser rays fanning up from the bottom">Lasers</button>
+              </div>
+            </div>
+          </div>
+          <div class="set-row"><span>Try it now</span><button class="pill-btn primary small" id="ambPreview"><i data-icon="ambient"></i><span>Preview 20 s</span></button></div>
+        </div>
+        <div class="group">
+          <h2>Colours</h2>
+          <div class="slider-set">
+            <div class="slider-label"><span>Brightness</span><b id="ambBrightVal">70%</b></div>
+            <input type="range" min="0" max="100" data-range="ambBright" data-out="ambBrightVal">
+          </div>
+          <div class="slider-set" title="Makes the colours richer than the picture">
+            <div class="slider-label"><span>Colour boost</span><b id="ambSatVal">40%</b></div>
+            <input type="range" min="0" max="100" data-range="ambSat" data-out="ambSatVal">
+          </div>
+          <div class="slider-set" title="How quickly the colours follow the picture. A scene change always switches at once.">
+            <div class="slider-label"><span>Speed</span><b id="ambSpeedVal">50%</b></div>
+            <input type="range" min="0" max="100" data-range="ambSpeed" data-out="ambSpeedVal">
+          </div>
+          <div class="slider-set">
+            <div class="slider-label"><span>Equalizer height</span><b id="ambEqHVal">40%</b></div>
+            <input type="range" min="0" max="100" data-range="ambEqHeight" data-out="ambEqHVal">
+          </div>
+          <label class="set-row"><span>Pulse with the sound</span><input type="checkbox" class="switch" data-setting="ambPulse"></label>
+          <label class="set-row"><span>Flash on scene changes</span><input type="checkbox" class="switch" data-setting="ambCutFlash"></label>
+        </div>
+        <div class="group">
+          <h2>Behaviour</h2>
+          <label class="set-row" title="Move the mouse onto the ambient screen to use it; the colours come back when you leave"><span>Fade away under the mouse</span><input type="checkbox" class="switch" data-setting="ambPeek"></label>
+          <label class="set-row"><span>Also while gaming</span><input type="checkbox" class="switch" data-setting="ambGames"></label>
+          <p class="amb-fine">The movie&rsquo;s screen is read a few times a second at a tiny size, on this PC only: nothing is saved or sent. Videos that block screen capture (Netflix and other protected streams in a browser) come out black, so the colours then follow your Visualizer colours and the music instead.</p>
+        </div>
+      </section>
+
+      <!-- Party mode -->
+      <section class="set-sec" data-sec="party">
+        <header class="sec-head"><h1>Party</h1><p>A full-screen light show to the music. Colours follow <em>Visualizer colours</em>. Move the mouse for controls · <kbd>Esc</kbd> leaves · <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> anywhere.</p></header>
+        <div class="group">
+          <h2>Party mode</h2>
+          <div class="set-row"><span>Screens</span>
+            <span class="seg" data-seg="partyScreens" data-type="str">
+              <button data-v="all" title="Every connected screen">All</button><button data-v="notch" title="Only the screen the notch is on">Notch's</button><button data-v="main" title="Only the main screen">Main</button>
+            </span>
+          </div>
+          <div class="set-row"><span>Theme</span>
+            <span class="seg" data-seg="partyTheme" data-type="str">
+              <button data-v="club" title="Big orb or sun with club lights">Club</button><button data-v="synthwave" title="Neon sunset, dancing mountains, rushing grid">Synthwave</button><button data-v="warp" title="Hyperspace: stars and rings rush past">Warp</button>
+            </span>
+          </div>
+          <label class="set-row"><span>Keep the screen awake</span><input type="checkbox" class="switch" data-setting="partyAwake"></label>
+          <div class="set-row"><span>Start it now</span><button class="pill-btn primary small party-go" id="partyGo"><i data-icon="sparkle"></i><span>Start party</span></button></div>
+        </div>
+        <div class="group">
+          <h2>Lighting (Club theme)</h2>
+          <label class="set-row"><span>Club light beams</span><input type="checkbox" class="switch" data-light="beams"></label>
+          <label class="set-row"><span>Pulsing edge glow</span><input type="checkbox" class="switch" data-light="glow"></label>
+          <label class="set-row"><span>Floating particles</span><input type="checkbox" class="switch" data-light="particles"></label>
+          <label class="set-row"><span>Blurred album art</span><input type="checkbox" class="switch" data-light="albumArt"></label>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="icons.js"></script>
+  <script src="common.js"></script>
+  <script src="settings.js"></script>
+</body>
+</html>

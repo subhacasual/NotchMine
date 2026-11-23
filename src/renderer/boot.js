@@ -11,6 +11,7 @@ window.__notchDebug = {
   hydrateIcons();
   const init = await api.init();
   S.settings = init.settings;
+  S.audioWanted = !!init.audioWant;      // another window (dock, desktop eq, party, wallpaper) moves to the music
   if (Number.isFinite(init.anchor)) S.anchor = init.anchor;
   if (init.side) setSide(true);
   if (init.game) S.game = init.game;

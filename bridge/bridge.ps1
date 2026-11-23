@@ -160,10 +160,15 @@ namespace NotchMine {
     }
     static bool dpi;
     // "" when the foreground window isn't full-screen, else the rect of the monitor it fills ("L,T,R,B", physical px)
-    public static string ForegroundFullscreenMonitor() {
+    // "l,t,r,b" of the monitor the foreground window fills, "" if it fills none, or "self" when NotchMine's own
+    // window (the notch, Settings…) is in front: that says nothing about the movie behind it, so the caller keeps
+    // what it had. (Clicking the notch, or Windows handing it the focus when a full-screen browser is minimized.)
+    public static string ForegroundFullscreenMonitor(int appPid) {
       if (!dpi) { SetProcessDPIAware(); dpi = true; }
       IntPtr h = GetForegroundWindow();
       if (h == IntPtr.Zero) return "";
+      uint fgPid; GetWindowThreadProcessId(h, out fgPid);
+      if (appPid > 0 && fgPid == (uint)appPid) return "self";
       var sb = new System.Text.StringBuilder(256);
       GetClassName(h, sb, 256);
       string c = sb.ToString();
@@ -369,6 +374,444 @@ namespace NotchMine {
 $gpuOk = $true
 try { Add-Type -TypeDefinition $gpuSrc -Language CSharp } catch { $gpuOk = $false; Log "gpu init failed: $_" }
 $script:gpuInfo = $null
+
+# ---------------------------------------------------------------- live wallpaper: a window behind the desktop icons
+# Windows 11 24H2+ ("raised desktop"): the icons (SHELLDLL_DefView) are a layered child of Progman, which has no
+# drawing surface of its own, so the wallpaper window must be a *layered* child of Progman, placed right below the
+# icons. Older Windows: the icons live in a WorkerW; Explorer makes a second WorkerW behind them on request (0x052C).
+$deskSrc = @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace NotchMine {
+  public static class Desk {
+    [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
+    delegate bool EnumProc(IntPtr h, IntPtr l);
+    [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] static extern IntPtr FindWindow(string c, string t);
+    [DllImport("user32.dll")] static extern IntPtr FindWindowEx(IntPtr p, IntPtr after, string c, string t);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
+    [DllImport("user32.dll")] static extern IntPtr SetParent(IntPtr child, IntPtr parent);
+    [DllImport("user32.dll")] static extern IntPtr GetParent(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint f);
+    [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int i);
+    [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr h, int i, int v);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] static extern bool SetLayeredWindowAttributes(IntPtr h, uint key, byte alpha, uint flags);
+    [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr h, uint m, IntPtr w, IntPtr l, uint f, uint t, out IntPtr r);
+    [DllImport("user32.dll")] static extern bool RedrawWindow(IntPtr h, IntPtr rc, IntPtr rgn, uint flags);
+    const uint SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010, SWP_SHOWWINDOW = 0x0040;
+    static bool dpi;
+    static void Dpi() { if (!dpi) { SetProcessDPIAware(); dpi = true; } }
+
+    [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr ctx);
+    // work in real pixels on every screen (the bridge is only "system" DPI aware, which scales windows on a
+    // screen whose zoom differs from the main one: a 1920×1200 screen at 125% came out 1536×960)
+    static IntPtr PerMonitor() { try { return SetThreadDpiAwarenessContext(new IntPtr(-4)); } catch { return IntPtr.Zero; } }
+    static void Restore(IntPtr old) { if (old != IntPtr.Zero) { try { SetThreadDpiAwarenessContext(old); } catch { } } }
+
+    // where the wallpaper goes: (parent, the window to sit right below, "raised" | "classic"), or parent = 0.
+    // First ask Explorer (0x052C) to draw the wallpaper in a WorkerW of its own. Without that, on the raised desktop
+    // the icon layer paints the normal wallpaper itself, opaquely, and covers ours.
+    static IntPtr Host(out IntPtr after, out IntPtr worker, out string mode) {
+      after = IntPtr.Zero; worker = IntPtr.Zero; mode = "";
+      IntPtr pm = FindWindow("Progman", null);
+      if (pm == IntPtr.Zero) return IntPtr.Zero;
+      IntPtr r;
+      SendMessageTimeout(pm, 0x052C, new IntPtr(0xD), new IntPtr(1), 0, 1000, out r);
+      SendMessageTimeout(pm, 0x052C, IntPtr.Zero, IntPtr.Zero, 0, 1000, out r);
+      IntPtr dv = FindWindowEx(pm, IntPtr.Zero, "SHELLDLL_DefView", null);
+      if (dv != IntPtr.Zero) {                                     // Windows 11 24H2+: icons, ours, then Explorer's wallpaper
+        after = dv; worker = FindWindowEx(pm, IntPtr.Zero, "WorkerW", null); mode = "raised"; return pm;
+      }
+      IntPtr ww = IntPtr.Zero;
+      EnumWindows((t, l) => {
+        if (FindWindowEx(t, IntPtr.Zero, "SHELLDLL_DefView", null) != IntPtr.Zero) ww = FindWindowEx(IntPtr.Zero, t, "WorkerW", null);
+        return true;
+      }, IntPtr.Zero);
+      if (ww == IntPtr.Zero) return IntPtr.Zero;
+      mode = "classic"; return ww;
+    }
+    static void Place(IntPtr me, IntPtr parent, IntPtr after, int x, int y, int w, int h) {
+      RECT pr; GetWindowRect(parent, out pr);                       // the parent spans every screen; x/y are screen pixels
+      SetWindowPos(me, after, x - pr.L, y - pr.T, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | (after == IntPtr.Zero ? SWP_NOZORDER : 0));
+    }
+    // returns "raised" / "classic", or "" if the desktop couldn't be found
+    public static string Attach(long hwnd, int x, int y, int w, int h) {
+      Dpi();
+      IntPtr me = new IntPtr(hwnd);
+      if (!IsWindow(me)) return "";
+      IntPtr old = PerMonitor();
+      try {
+        IntPtr after, worker; string mode;
+        IntPtr parent = Host(out after, out worker, out mode);
+        if (parent == IntPtr.Zero) return "";
+        SetWindowLong(me, -16, (GetWindowLong(me, -16) & ~unchecked((int)0x80000000)) | 0x40000000);   // WS_POPUP → WS_CHILD
+        SetWindowLong(me, -20, GetWindowLong(me, -20) | 0x80000);                                      // WS_EX_LAYERED
+        SetLayeredWindowAttributes(me, 0, 255, 2);                                                       // fully opaque
+        SetParent(me, parent);
+        Place(me, parent, after, x, y, w, h);
+        // Explorer's wallpaper at the very bottom, behind ours (and behind every other screen's)
+        if (worker != IntPtr.Zero) SetWindowPos(worker, new IntPtr(1), 0, 0, 0, 0, 0x0001 | 0x0002 | SWP_NOACTIVATE);
+        return mode;
+      } finally { Restore(old); }
+    }
+    // watchdog while the live wallpaper is on: "" when the taskbar and the desktop answer, else which one didn't
+    public static string Hung() {
+      IntPtr r;
+      IntPtr tb = FindWindow("Shell_TrayWnd", null);
+      if (tb != IntPtr.Zero && SendMessageTimeout(tb, 0, IntPtr.Zero, IntPtr.Zero, 0x0002, 2000, out r) == IntPtr.Zero) return "taskbar";   // WM_NULL, SMTO_ABORTIFHUNG
+      IntPtr pm = FindWindow("Progman", null);
+      if (pm != IntPtr.Zero && SendMessageTimeout(pm, 0, IntPtr.Zero, IntPtr.Zero, 0x0002, 2000, out r) == IntPtr.Zero) return "desktop";
+      return "";
+    }
+    // ask the desktop to repaint (after a wallpaper window goes away, so the normal wallpaper shows at once)
+    public static void Refresh() {
+      IntPtr pm = FindWindow("Progman", null);
+      if (pm != IntPtr.Zero) RedrawWindow(pm, IntPtr.Zero, IntPtr.Zero, 0x0001 | 0x0004 | 0x0080 | 0x0100);   // INVALIDATE | ERASE | ALLCHILDREN | UPDATENOW
+    }
+  }
+}
+'@
+$deskOk = $true
+try { Add-Type -TypeDefinition $deskSrc -Language CSharp } catch { $deskOk = $false; Log "desktop init failed: $_" }
+
+# ---------------------------------------------------------------- NotchMine taskbar (dock): the Windows taskbar, open windows
+# Hide: the Windows taskbar is set to auto-hide (so it gives its strip of screen back) and its windows are hidden;
+# Show puts both back exactly as they were. The dock registers as an "app bar", so maximized windows stop above it.
+$barSrc = @'
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+namespace NotchMine {
+  [StructLayout(LayoutKind.Sequential, Pack = 4)] public struct BarPropKey { public Guid fmtid; public uint pid; }
+  [StructLayout(LayoutKind.Sequential)] public struct BarPropVariant { public ushort vt; public ushort r1, r2, r3; public IntPtr p; public IntPtr p2; }   // 24 bytes, like the real one
+  [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  public interface IBarPropertyStore {
+    [PreserveSig] int GetCount(out uint c);
+    [PreserveSig] int GetAt(uint i, out BarPropKey k);
+    [PreserveSig] int GetValue(ref BarPropKey k, out BarPropVariant v);
+    [PreserveSig] int SetValue(ref BarPropKey k, ref BarPropVariant v);
+    [PreserveSig] int Commit();
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct BarSize { public int cx, cy; }
+  [ComImport, Guid("bcc18b79-ba16-442f-80c4-8a59c30c463b"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  public interface IBarImageFactory { [PreserveSig] int GetImage(BarSize size, int flags, out IntPtr hbm); }
+  public static class Bar {
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern int SHCreateItemFromParsingName(string path, IntPtr pbc, ref Guid riid, [MarshalAs(UnmanagedType.Interface)] out IBarImageFactory item);
+    [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr h);
+    // a Store app's icon (WhatsApp, Teams…) by its app ID, as Start shows it; keeps the transparency
+    public static string AppIconPng(string aumid, int size) {
+      try {
+        Guid iid = typeof(IBarImageFactory).GUID; IBarImageFactory f;
+        if (SHCreateItemFromParsingName("shell:AppsFolder\\" + aumid, IntPtr.Zero, ref iid, out f) != 0 || f == null) return "";
+        try {
+          IntPtr hbm; var sz = new BarSize(); sz.cx = size; sz.cy = size;
+          if (f.GetImage(sz, 0x1 | 0x4, out hbm) != 0 || hbm == IntPtr.Zero) return "";   // BIGGERSIZEOK | ICONONLY
+          try {
+            using (var tmp = System.Drawing.Image.FromHbitmap(hbm)) {
+              var r = new System.Drawing.Rectangle(0, 0, tmp.Width, tmp.Height);
+              var bd = tmp.LockBits(r, System.Drawing.Imaging.ImageLockMode.ReadOnly, tmp.PixelFormat);
+              try {
+                using (var argb = new System.Drawing.Bitmap(bd.Width, bd.Height, bd.Stride, System.Drawing.Imaging.PixelFormat.Format32bppPArgb, bd.Scan0))
+                using (var ms = new System.IO.MemoryStream()) { argb.Save(ms, System.Drawing.Imaging.ImageFormat.Png); return Convert.ToBase64String(ms.ToArray()); }
+              } finally { tmp.UnlockBits(bd); }
+            }
+          } finally { DeleteObject(hbm); }
+        } finally { Marshal.ReleaseComObject(f); }
+      } catch { return ""; }
+    }
+    [DllImport("shell32.dll")] static extern int SHGetPropertyStoreForWindow(IntPtr h, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out IBarPropertyStore ps);
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern int SHGetPropertyStoreFromParsingName(string path, IntPtr bc, int flags, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out IBarPropertyStore ps);
+    [DllImport("ole32.dll")] static extern int PropVariantClear(ref BarPropVariant v);
+    // the "app ID" Windows uses to put windows on taskbar buttons (Chrome profiles and web apps each have their own)
+    static string Aumid(IBarPropertyStore ps) {
+      var k = new BarPropKey { fmtid = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), pid = 5 };
+      BarPropVariant v;
+      if (ps.GetValue(ref k, out v) != 0) return "";
+      string s = v.vt == 31 && v.p != IntPtr.Zero ? Marshal.PtrToStringUni(v.p) : "";
+      PropVariantClear(ref v);
+      return s ?? "";
+    }
+    static Dictionary<long, string> winIds = new Dictionary<long, string>();
+    static string WindowAumid(IntPtr h) {
+      string id;
+      if (winIds.TryGetValue(h.ToInt64(), out id)) return id;
+      id = "";
+      try {
+        Guid iid = typeof(IBarPropertyStore).GUID; IBarPropertyStore ps;
+        if (SHGetPropertyStoreForWindow(h, ref iid, out ps) == 0 && ps != null) { try { id = Aumid(ps); } finally { Marshal.ReleaseComObject(ps); } }
+      } catch { }
+      if (winIds.Count > 500) winIds.Clear();
+      winIds[h.ToInt64()] = id;
+      return id;
+    }
+    public static string FileAumid(string path) {
+      try {
+        Guid iid = typeof(IBarPropertyStore).GUID; IBarPropertyStore ps;
+        if (SHGetPropertyStoreFromParsingName(path, IntPtr.Zero, 0, ref iid, out ps) == 0 && ps != null) { try { return Aumid(ps); } finally { Marshal.ReleaseComObject(ps); } }
+      } catch { }
+      return "";
+    }
+    [StructLayout(LayoutKind.Sequential)] struct APPBARDATA { public int cbSize; public IntPtr hWnd; public uint msg; public uint edge; public RECT rc; public IntPtr lParam; }
+    delegate bool EnumProc(IntPtr h, IntPtr l);
+    [DllImport("shell32.dll")] static extern UIntPtr SHAppBarMessage(uint msg, ref APPBARDATA d);
+    [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] static extern IntPtr FindWindow(string c, string t);
+    [DllImport("user32.dll")] static extern IntPtr FindWindowEx(IntPtr p, IntPtr after, string c, string t);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint cmd);
+    [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int i);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint PrivateExtractIcons(string file, int index, int cx, int cy, IntPtr[] icons, uint[] ids, uint n, uint flags);
+    [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr h);
+    // an app's icon at the size the dock draws it (works for .exe, .dll and .ico, like the Windows taskbar does)
+    public static string IconPng(string file, int index, int size) {
+      file = Environment.ExpandEnvironmentVariables(file);
+      var h = new IntPtr[1]; var id = new uint[1];
+      uint got = PrivateExtractIcons(file, index, size, size, h, id, 1, 0);
+      if (got == 0 || got == 0xFFFFFFFF || h[0] == IntPtr.Zero) return "";
+      try {
+        using (var ic = System.Drawing.Icon.FromHandle(h[0]))
+        using (var bmp = ic.ToBitmap())
+        using (var ms = new System.IO.MemoryStream()) { bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png); return Convert.ToBase64String(ms.ToArray()); }
+      } finally { DestroyIcon(h[0]); }
+    }
+    [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+    [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int v, int size);
+    [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool QueryFullProcessImageName(IntPtr h, int flags, StringBuilder s, ref int n);
+    const uint ABM_NEW = 0, ABM_REMOVE = 1, ABM_QUERYPOS = 2, ABM_SETPOS = 3, ABM_GETSTATE = 4, ABM_SETSTATE = 10;
+    static bool dpi; static void Dpi() { if (!dpi) { SetProcessDPIAware(); dpi = true; } }
+
+    // ---- hiding / showing the Windows taskbar
+    public static bool Hidden;
+    static int origState = -1;
+    static List<IntPtr> Trays() {
+      var l = new List<IntPtr>();
+      IntPtr t = FindWindow("Shell_TrayWnd", null); if (t != IntPtr.Zero) l.Add(t);
+      IntPtr s = IntPtr.Zero;
+      while ((s = FindWindowEx(IntPtr.Zero, s, "Shell_SecondaryTrayWnd", null)) != IntPtr.Zero) l.Add(s);
+      return l;
+    }
+    static void SetState(int state) {
+      var d = new APPBARDATA(); d.cbSize = Marshal.SizeOf(typeof(APPBARDATA));
+      d.hWnd = FindWindow("Shell_TrayWnd", null); d.lParam = new IntPtr(state);
+      SHAppBarMessage(ABM_SETSTATE, ref d);
+    }
+    static int GetState() {
+      var d = new APPBARDATA(); d.cbSize = Marshal.SizeOf(typeof(APPBARDATA));
+      d.hWnd = FindWindow("Shell_TrayWnd", null);
+      return (int)SHAppBarMessage(ABM_GETSTATE, ref d).ToUInt32();
+    }
+    // returns the taskbar's own setting from before (auto-hide or not), so it can be put back even after a crash
+    public static int Hide(int known) {
+      if (!Hidden) { origState = known >= 0 ? known : GetState(); Hidden = true; }
+      SetState(1);                                                   // ABS_AUTOHIDE: frees the strip of screen
+      foreach (var t in Trays()) ShowWindow(t, 0);                   // SW_HIDE
+      return origState;
+    }
+    // after a crash: put the remembered setting back and show the taskbar
+    public static void Restore(int state) { SetState(state); Hidden = false; foreach (var t in Trays()) ShowWindow(t, 5); }
+    // the taskbar likes to come back (Start menu, Explorer restart, a new screen): hide it again
+    public static void Keep() {
+      if (!Hidden) return;
+      foreach (var t in Trays()) if (IsWindowVisible(t)) ShowWindow(t, 0);
+    }
+    public static void Show() {
+      if (Hidden) { SetState(origState < 0 ? 2 : origState); Hidden = false; }
+      foreach (var t in Trays()) ShowWindow(t, 5);                   // SW_SHOW
+    }
+    // "peek": show the real taskbar for a moment (to reach tray icons), Keep() hides it again later
+    public static void Peek() { foreach (var t in Trays()) ShowWindow(t, 5); }
+
+    // ---- where Windows opens Start and search. Both follow the (hidden) Windows taskbar's own layout, not ours:
+    // its alignment (TaskbarAl: 0 left, 1 centre) and its search button (SearchboxTaskbarMode: 1 icon, 2 box).
+    // With the search box, Win+S types into the Windows box itself, drawn over our bar at its own spot. So:
+    //   full-width bar: left + box   → Start opens at the left; the Windows box lands exactly on our Search pill
+    //   the docks:      centre + icon → Start and search open centred above the dock; search types in its own panel
+    // Explorer picks both up at once. The user's own values are put back when ours goes away (-1 = wasn't set).
+    const string ADV = @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", SRCH = @"Software\Microsoft\Windows\CurrentVersion\Search";
+    static int origAl = -2, origMode = -2;                           // -2: nothing changed by us
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessageTimeout(IntPtr h, uint m, UIntPtr w, string l, uint f, uint t, out UIntPtr r);
+    static int ReadDw(string key, string name) {
+      using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(key)) { object v = k == null ? null : k.GetValue(name); return v is int ? (int)v : -1; }
+    }
+    static void WriteDw(string key, string name, int v) {
+      using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(key)) {
+        if (v < 0) k.DeleteValue(name, false); else k.SetValue(name, v, Microsoft.Win32.RegistryValueKind.DWord);
+      }
+    }
+    static void TrayNotify() { UIntPtr r; SendMessageTimeout(new IntPtr(0xFFFF), 0x001A, UIntPtr.Zero, "TraySettings", 2, 1000, out r); }   // WM_SETTINGCHANGE, SMTO_ABORTIFHUNG
+    // returns "al mode": the user's own values, for main.js to keep (so they can be put back even after a crash)
+    public static string Layout(int al, int mode, int knownAl, int knownMode) {
+      if (origAl == -2) {
+        origAl = knownAl >= -1 ? knownAl : ReadDw(ADV, "TaskbarAl");
+        origMode = knownMode >= -1 ? knownMode : ReadDw(SRCH, "SearchboxTaskbarMode");
+      }
+      bool changed = false;
+      if (ReadDw(ADV, "TaskbarAl") != al) { WriteDw(ADV, "TaskbarAl", al); changed = true; }
+      if (ReadDw(SRCH, "SearchboxTaskbarMode") != mode) { WriteDw(SRCH, "SearchboxTaskbarMode", mode); changed = true; }
+      if (changed) TrayNotify();
+      return origAl + " " + origMode;
+    }
+    public static void LayoutRestore(int al, int mode) {
+      WriteDw(ADV, "TaskbarAl", al); WriteDw(SRCH, "SearchboxTaskbarMode", mode); TrayNotify();
+      origAl = origMode = -2;
+    }
+    public static void LayoutBack() { if (origAl != -2) LayoutRestore(origAl, origMode); }
+
+    // ---- the dock as an app bar: maximized windows stop above it
+    public static void AppBar(long hwnd, int l, int t, int r, int b) {
+      Dpi();
+      var d = new APPBARDATA(); d.cbSize = Marshal.SizeOf(typeof(APPBARDATA)); d.hWnd = new IntPtr(hwnd);
+      d.msg = 0x8000 + 0x4E4D;                                       // WM_APP + 'NM' (we don't need the callbacks)
+      SHAppBarMessage(ABM_NEW, ref d);
+      d.edge = 3; d.rc.L = l; d.rc.T = t; d.rc.R = r; d.rc.B = b;    // ABE_BOTTOM
+      SHAppBarMessage(ABM_QUERYPOS, ref d);
+      d.rc.T = d.rc.B - (b - t);
+      SHAppBarMessage(ABM_SETPOS, ref d);
+    }
+    public static void AppBarOff(long hwnd) {
+      var d = new APPBARDATA(); d.cbSize = Marshal.SizeOf(typeof(APPBARDATA)); d.hWnd = new IntPtr(hwnd);
+      SHAppBarMessage(ABM_REMOVE, ref d);
+    }
+
+    // ---- open windows (what Alt+Tab would show): "hwnd \t pid \t exe path \t minimized \t app id \t title" per line
+    static Dictionary<uint, string> paths = new Dictionary<uint, string>();
+    static string PathOf(uint pid) {
+      string p;
+      if (paths.TryGetValue(pid, out p)) return p;
+      p = "";
+      IntPtr h = OpenProcess(0x1000, false, (int)pid);
+      if (h != IntPtr.Zero) { var sb = new StringBuilder(1024); int n = sb.Capacity; if (QueryFullProcessImageName(h, 0, sb, ref n)) p = sb.ToString(); CloseHandle(h); }
+      if (paths.Count > 300) paths.Clear();
+      paths[pid] = p;
+      return p;
+    }
+    static readonly string[] skip = { "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow", "TopLevelWindowForOverflowXamlIsland" };
+    public static string Tasks(long selfPid) {
+      var sb = new StringBuilder();
+      EnumWindows((h, l) => {
+        if (!IsWindowVisible(h) || GetWindow(h, 4) != IntPtr.Zero) return true;            // hidden, or owned by another window
+        int ex = GetWindowLong(h, -20);
+        if ((ex & 0x80) != 0 && (ex & 0x40000) == 0) return true;                          // tool window (unless WS_EX_APPWINDOW)
+        int cloaked; if (DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0) return true;   // other virtual desktop / suspended app
+        var t = new StringBuilder(256); if (GetWindowText(h, t, 256) == 0) return true;
+        var c = new StringBuilder(128); GetClassName(h, c, 128);
+        if (Array.IndexOf(skip, c.ToString()) >= 0) return true;
+        uint pid; GetWindowThreadProcessId(h, out pid);
+        if (pid == selfPid) return true;
+        string title = t.ToString().Replace('\t', ' ').Replace('\n', ' ');
+        sb.Append(h.ToInt64()).Append('\t').Append(pid).Append('\t').Append(PathOf(pid)).Append('\t').Append(IsIconic(h) ? 1 : 0).Append('\t').Append(WindowAumid(h)).Append('\t').Append(title).Append('\n');
+        return true;
+      }, IntPtr.Zero);
+      return sb.ToString();
+    }
+
+    // ---- window actions
+    public static void Activate(long hwnd) {
+      IntPtr w = new IntPtr(hwnd);
+      if (IsIconic(w)) ShowWindow(w, 9);                                                     // SW_RESTORE
+      if (SetForegroundWindow(w) && GetForegroundWindow() == w) return;
+      uint pid, fg = GetWindowThreadProcessId(GetForegroundWindow(), out pid), me = GetCurrentThreadId();
+      AttachThreadInput(me, fg, true);
+      BringWindowToTop(w); SetForegroundWindow(w);
+      AttachThreadInput(me, fg, false);
+      if (GetForegroundWindow() != w) { keybd_event(0x12, 0, 0, UIntPtr.Zero); keybd_event(0x12, 0, 2, UIntPtr.Zero); SetForegroundWindow(w); }
+    }
+    public static void Minimize(long hwnd) { ShowWindow(new IntPtr(hwnd), 6); }                // SW_MINIMIZE
+    public static void Close(long hwnd) { PostMessage(new IntPtr(hwnd), 0x0010, IntPtr.Zero, IntPtr.Zero); }   // WM_CLOSE
+    // Windows shortcuts: Start, search, task view, quick settings, notifications
+    public static void Keys(string what) {
+      byte k = 0;
+      if (what == "search") k = 0x53; else if (what == "taskview") k = 0x09; else if (what == "quick") k = 0x41; else if (what == "notif") k = 0x4E;
+      keybd_event(0x5B, 0, 0, UIntPtr.Zero);                                                 // Win down
+      if (k != 0) { keybd_event(k, 0, 0, UIntPtr.Zero); keybd_event(k, 0, 2, UIntPtr.Zero); }
+      keybd_event(0x5B, 0, 2, UIntPtr.Zero);                                                 // Win up
+    }
+  }
+
+  // stdin on its own thread. Clicks on the dock (open / minimize / close a window, Start, search…) run right away
+  // instead of waiting for the poll loop, which can be held up for seconds by a slow app (a WinRT media call, a hung
+  // window). Everything else is queued for the loop, in order.
+  public static class Input {
+    static readonly System.Collections.Concurrent.ConcurrentQueue<string> q = new System.Collections.Concurrent.ConcurrentQueue<string>();
+    static volatile bool closed;
+    public static bool Closed { get { return closed; } }
+    public static void Start() {
+      var t = new System.Threading.Thread(() => {
+        try {
+          var r = new System.IO.StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false));
+          string line;
+          while ((line = r.ReadLine()) != null) { if (!Fast(line)) q.Enqueue(line); }
+        } catch { }
+        closed = true;
+      });
+      t.IsBackground = true;
+      t.Start();
+    }
+    public static string Next() { string s; return q.TryDequeue(out s) ? s : null; }
+    static bool Fast(string line) {
+      var p = line.Trim().Split(' ');
+      if (p.Length != 3) return false;
+      if (p[0] == "win") {
+        long h;
+        if (!long.TryParse(p[2], out h) || (p[1] != "activate" && p[1] != "min" && p[1] != "close")) return false;
+        string act = p[1];
+        // a thread-pool thread each, so one window that doesn't answer can't hold up the next click
+        System.Threading.ThreadPool.QueueUserWorkItem(_ => {
+          try { if (act == "activate") Bar.Activate(h); else if (act == "min") Bar.Minimize(h); else Bar.Close(h); } catch { }
+          System.Threading.Thread.Sleep(60);
+          q.Enqueue("win-done");                                       // the loop refreshes the window list
+        });
+        return true;
+      }
+      if (p[0] == "tb" && p[1] == "key") {
+        string k = p[2];
+        System.Threading.ThreadPool.QueueUserWorkItem(_ => { try { Bar.Keys(k); } catch { } });
+        return true;
+      }
+      return false;
+    }
+  }
+}
+'@
+$barOk = $true
+try { Add-Type -TypeDefinition $barSrc -Language CSharp -ReferencedAssemblies System.Drawing } catch { $barOk = $false; Log "taskbar init failed: $_" }
+$script:tasksOn = $false
+$script:tasksLast = ''
+function Poll-Tasks {
+  if (-not $script:tasksOn -or -not $barOk) { return }
+  try {
+    $t = [NotchMine.Bar]::Tasks([int64]$PID)
+    if ($t -eq $script:tasksLast) { return }
+    $script:tasksLast = $t
+    $list = @()
+    foreach ($ln in ($t -split "`n")) {
+      if (-not $ln) { continue }
+      $f = $ln -split "`t", 6
+      $list += @{ hwnd = $f[0]; pid = [int]$f[1]; path = $f[2]; min = ($f[3] -eq '1'); aumid = $f[4]; title = $f[5] }
+    }
+    Send @{ type = 'tasks'; list = $list }
+  } catch { Log "tasks failed: $_" }
+}
 # Windows' own list of games it has seen (Game Bar / Game Mode remember these): full exe paths
 function Send-Games {
   try {
@@ -920,6 +1363,66 @@ function Handle-Command([string]$line) {
       $sp = $rest.IndexOf(' ')
       Do-Ocr $rest.Substring(0, $sp) $rest.Substring($sp + 1)
     }
+    'tb' {
+      if (-not $barOk) { return }
+      switch ($parts[1]) {
+        'hide'   { $o = [NotchMine.Bar]::Hide($(if ($parts.Count -gt 2) { [int]$parts[2] } else { -1 })); Send @{ type = 'tb-hidden'; orig = $o } }
+        'restore' { [NotchMine.Bar]::Restore([int]$parts[2]) }
+        'show'   { [NotchMine.Bar]::Show() }
+        'peek'   { [NotchMine.Bar]::Peek(); $script:peekUntil = (Get-Date).AddSeconds(8) }
+        'appbar' { [NotchMine.Bar]::AppBar([int64]$parts[2], [int]$parts[3], [int]$parts[4], [int]$parts[5], [int]$parts[6]) }
+        'appbar-off' { [NotchMine.Bar]::AppBarOff([int64]$parts[2]) }
+        'tasks'  { $script:tasksOn = ($parts[2] -eq 'on'); $script:tasksLast = ''; Poll-Tasks }
+        'key'    { [NotchMine.Bar]::Keys($parts[2]) }
+        'layout' {
+          $o = [NotchMine.Bar]::Layout([int]$parts[2], [int]$parts[3], [int]$parts[4], [int]$parts[5]) -split ' '
+          Send @{ type = 'tb-layout'; al = [int]$o[0]; mode = [int]$o[1] }
+        }
+        'layout-restore' { [NotchMine.Bar]::LayoutRestore([int]$parts[2], [int]$parts[3]) }
+        'layout-back' { [NotchMine.Bar]::LayoutBack() }
+      }
+    }
+    'aumid' {
+      # aumid <id> <shortcut path, may contain spaces>: the app ID a pinned shortcut belongs to
+      if (-not $barOk) { return }
+      $m = [regex]::Match($line.Trim(), '^aumid\s+(\S+)\s+(.+)$')
+      if ($m.Success) { Send @{ type = 'aumid'; id = $m.Groups[1].Value; value = [NotchMine.Bar]::FileAumid($m.Groups[2].Value) } }
+    }
+    'icon' {
+      # icon <id> <index> <file path, may contain spaces>
+      if (-not $barOk) { return }
+      $m = [regex]::Match($line.Trim(), '^icon\s+(\S+)\s+(-?\d+)\s+(.+)$')
+      if ($m.Success) { Send @{ type = 'icon'; id = $m.Groups[1].Value; data = [NotchMine.Bar]::IconPng($m.Groups[3].Value, [int]$m.Groups[2].Value, 48) } }
+    }
+    'appicon' {
+      # appicon <id> <Store app ID>: its icon, as Start shows it
+      if (-not $barOk) { return }
+      $m = [regex]::Match($line.Trim(), '^appicon\s+(\S+)\s+(\S+)$')
+      if ($m.Success) { Send @{ type = 'icon'; id = $m.Groups[1].Value; data = [NotchMine.Bar]::AppIconPng($m.Groups[2].Value, 48) } }
+    }
+    'win' {
+      if (-not $barOk) { return }
+      switch ($parts[1]) {
+        'activate' { [NotchMine.Bar]::Activate([int64]$parts[2]) }
+        'min'      { [NotchMine.Bar]::Minimize([int64]$parts[2]) }
+        'close'    { [NotchMine.Bar]::Close([int64]$parts[2]) }
+      }
+      Start-Sleep -Milliseconds 60
+      Poll-Tasks
+      Poll-Foreground
+    }
+    'win-done' { Poll-Tasks; Poll-Foreground }                    # a dock click ran on the input thread (Input.Fast)
+    'wp' {
+      if (-not $deskOk) { Send @{ type = 'wp-attached'; hwnd = $parts[2]; mode = '' }; return }
+      switch ($parts[1]) {
+        'attach' {
+          $m = [NotchMine.Desk]::Attach([int64]$parts[2], [int]$parts[3], [int]$parts[4], [int]$parts[5], [int]$parts[6])
+          Send @{ type = 'wp-attached'; hwnd = $parts[2]; mode = $m }
+        }
+        'refresh' { [NotchMine.Desk]::Refresh() }
+        'watch' { $script:wpWatch = ($parts[2] -eq 'on'); $script:wpHangs = 0 }
+      }
+    }
     'notif' {
       $script:notifEnabled = ($parts[1] -eq 'on')
       if (-not $script:notifEnabled) { $script:notifPrimed = $false; $script:notifSeen = @{} }
@@ -934,34 +1437,67 @@ Poll-Volume $true
 Get-Brightness
 
 $lastFs = $null
+$appPid = 0                            # NotchMine's own process (main.js passes it): its windows don't count as "left full-screen"
+try { $appPid = [int]$env:NOTCHMINE_PID } catch {}
 $notifStatus = ''
-# NB: [Console]::In.ReadLineAsync() is secretly synchronous on .NET Framework,
-# so read stdin through a real StreamReader to keep the poll loop running.
-$stdin = New-Object System.IO.StreamReader ([Console]::OpenStandardInput()), ([System.Text.Encoding]::UTF8)
-$pending = $stdin.ReadLineAsync()
+# stdin: with the taskbar code loaded, a thread of its own (NotchMine.Input: dock clicks run at once, the rest is
+# queued for this loop). Without it, a StreamReader polled here. NB: [Console]::In.ReadLineAsync() is secretly
+# synchronous on .NET Framework, hence the real StreamReader.
+$fastInput = $false
+if ($barOk) { try { [NotchMine.Input]::Start(); $fastInput = $true } catch { Log "input thread failed: $_" } }
+if (-not $fastInput) {
+  $stdin = New-Object System.IO.StreamReader ([Console]::OpenStandardInput()), ([System.Text.Encoding]::UTF8)
+  $pending = $stdin.ReadLineAsync()
+}
+function Quit-Bridge {                 # Electron closed the pipe (NotchMine quit or crashed):
+  if ($barOk -and [NotchMine.Bar]::Hidden) { [NotchMine.Bar]::Show() }   # never leave anyone without a taskbar
+  if ($barOk) { try { [NotchMine.Bar]::LayoutBack() } catch { } }        # nor with our Start / search layout
+  exit 0
+}
+# a check that holds the loop up for more than a second is logged (it delays everything else the bridge does)
+$sw = [System.Diagnostics.Stopwatch]::new()
+function Slow([string]$what) { if ($sw.ElapsedMilliseconds -gt 1000) { Log "slow: $what took $($sw.ElapsedMilliseconds) ms" } }
 $tick = 0
 while ($true) {
   # Drain any commands that arrived
-  while ($pending.IsCompleted) {
-    $line = $pending.Result
-    if ($null -eq $line) { exit 0 }   # Electron closed the pipe
-    try { Handle-Command $line } catch { Log "command '$line' failed: $_" }
-    $pending = $stdin.ReadLineAsync()
+  if ($fastInput) {
+    $closed = [NotchMine.Input]::Closed                             # read first: lines before the end are queued by then
+    while ($null -ne ($line = [NotchMine.Input]::Next())) {
+      $sw.Restart()
+      try { Handle-Command $line } catch { Log "command '$line' failed: $_" }
+      Slow "command '$(($line -split ' ')[0..1] -join ' ')'"
+    }
+    if ($closed) { Quit-Bridge }
+  } else {
+    while ($pending.IsCompleted) {
+      $line = $pending.Result
+      if ($null -eq $line) { Quit-Bridge }
+      try { Handle-Command $line } catch { Log "command '$line' failed: $_" }
+      $pending = $stdin.ReadLineAsync()
+    }
   }
-  if ($tick % 3 -eq 0) { Poll-Media $false }
-  Poll-Volume $false
-  if ($tick % 5 -eq 2) { Poll-Network }
-  if ($tick % 15 -eq 7) { Poll-Connection }
-  if ($tick % 7 -eq 4) { Poll-Notifications }
+  if ($tick % 3 -eq 0) { $sw.Restart(); Poll-Media $false; Slow 'media' }
+  $sw.Restart(); Poll-Volume $false; Slow 'volume'
+  if ($tick % 5 -eq 2) { $sw.Restart(); Poll-Network; Slow 'network' }
+  if ($tick % 15 -eq 7) { $sw.Restart(); Poll-Connection; Slow 'connection' }
+  if ($tick % 7 -eq 4) { $sw.Restart(); Poll-Notifications; Slow 'notifications' }
   Poll-Keys
-  if ($tick % 2 -eq 0) { Poll-Foreground }
-  if ($tick % 5 -eq 1) { Poll-Privacy; Poll-Devices }
-  if ($tick % 10 -eq 3) { Poll-Drives }
-  if ($tick % 5 -eq 3) { Poll-Gpu }
+  if ($tick % 2 -eq 0) { $sw.Restart(); Poll-Foreground; Slow 'foreground' }
+  if ($tick % 2 -eq 1) { $sw.Restart(); Poll-Tasks; Slow 'tasks' }
+  if ($barOk -and [NotchMine.Bar]::Hidden -and ((-not $script:peekUntil) -or (Get-Date) -gt $script:peekUntil)) { [NotchMine.Bar]::Keep() }
+  if ($tick % 5 -eq 1) { $sw.Restart(); Poll-Privacy; Slow 'privacy'; $sw.Restart(); Poll-Devices; Slow 'devices' }
+  if ($tick % 10 -eq 3) { $sw.Restart(); Poll-Drives; Slow 'drives' }
+  # live wallpaper on: two missed answers in a row (about 4 s) from the taskbar or the desktop → main switches it off
+  if ($script:wpWatch -and $deskOk -and $tick % 10 -eq 6) {
+    $h = [NotchMine.Desk]::Hung()
+    if ($h) { $script:wpHangs++; if ($script:wpHangs -ge 2) { Send @{ type = 'wp-hang'; what = $h }; $script:wpWatch = $false } }
+    else { $script:wpHangs = 0 }
+  }
+  if ($tick % 5 -eq 3) { $sw.Restart(); Poll-Gpu; Slow 'gpu' }
   if ($audioOk -and $tick % 5 -eq 0) {
     try {
-      $fsm = [NotchMine.Win]::ForegroundFullscreenMonitor()
-      if ($fsm -ne $script:lastFs) { $script:lastFs = $fsm; Send @{ type = 'fullscreen'; value = ($fsm -ne ''); monitor = $fsm } }
+      $fsm = [NotchMine.Win]::ForegroundFullscreenMonitor($appPid)
+      if ($fsm -ne 'self' -and $fsm -ne $script:lastFs) { $script:lastFs = $fsm; Send @{ type = 'fullscreen'; value = ($fsm -ne ''); monitor = $fsm } }
     } catch {}
   }
   $tick++

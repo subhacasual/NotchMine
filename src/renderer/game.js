@@ -136,35 +136,3 @@ api.on('game-summary', g => {
 layers.peek.addEventListener('click', e => {
   if (e.target.closest('.pk-btn[data-act="game-alerts"]')) expand('alerts');
 });
-
-// ---------------------------------------------------------------- Settings → Game mode
-async function renderGameApps() {
-  const mine = S.settings.gameApps || [], never = S.settings.notGames || [];
-  $('gameList').innerHTML = mine.length ? mine.map(a => sideChip(a, true)).join('') : '<span class="muted small">None yet: most games are found by themselves</span>';
-  $('notGameList').innerHTML = never.length ? never.map(a => sideChip(a, true)).join('') : '<span class="muted small">Nothing</span>';
-  const recentAll = await api.sideApps();
-  const recent = recentAll.filter(r => !mine.some(a => a.exe === r.exe) && !never.some(a => a.exe === r.exe));
-  $('gameRecent').innerHTML = recent.length ? recent.slice(0, 8).map(a => sideChip(a, false)).join('') : '<span class="muted small">Start a game, then come back here</span>';
-  const all = [...mine, ...never].map(a => { const r = recentAll.find(x => x.exe === a.exe) || {}; return { ...a, path: a.path || r.path, icon: r.icon }; }).concat(recent);
-  document.querySelectorAll('#gameList .side-chip, #notGameList .side-chip, #gameRecent .side-chip').forEach(async el => {
-    const a = all.find(x => x.exe === el.dataset.exe);
-    const src = a && (a.icon || await sideIcon(a));
-    if (src) el.querySelector('.sc-ic').innerHTML = `<img src="${esc(src)}" alt="">`;
-  });
-  GAME_RECENT = recent;
-}
-let GAME_RECENT = [];
-$('gameList').addEventListener('click', e => {
-  const b = e.target.closest('.side-chip');
-  if (b) patchSettings({ gameApps: (S.settings.gameApps || []).filter(a => a.exe !== b.dataset.exe) }).then(renderGameApps);
-});
-$('notGameList').addEventListener('click', e => {
-  const b = e.target.closest('.side-chip');
-  if (b) patchSettings({ notGames: (S.settings.notGames || []).filter(a => a.exe !== b.dataset.exe) }).then(renderGameApps);
-});
-$('gameRecent').addEventListener('click', e => {
-  const b = e.target.closest('.side-chip');
-  const a = b && GAME_RECENT.find(x => x.exe === b.dataset.exe);
-  if (a) patchSettings({ gameApps: [...(S.settings.gameApps || []), { exe: a.exe, name: a.name, path: a.path }] }).then(renderGameApps);
-});
-document.querySelector('#setNav [data-sec="game"]').addEventListener('click', renderGameApps);

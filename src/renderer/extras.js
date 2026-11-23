@@ -1,71 +1,14 @@
 'use strict';
-/* NotchMine v2 widgets: themes & settings, Launchpad, notifications, network, audio visualizer.
-   Shares globals (S, api, $, peek, icon, esc, clamp, …) with app.js. */
-
-// ================================================================== settings: sections, segments, themes, accents
-document.querySelectorAll('#setNav button[data-sec]').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('#setNav button[data-sec]').forEach(x => x.classList.toggle('active', x === b));
-  document.querySelectorAll('.set-sec').forEach(s => s.classList.toggle('active', s.dataset.sec === b.dataset.sec));
-}));
+/* NotchMine v2 widgets: themes, Launchpad, notifications, network, audio visualizer.
+   Shares globals (S, api, $, peek, icon, esc, clamp, …) with app.js. The options themselves live in the
+   settings window (settings.html + settings.js); the notch only follows S.settings. */
 
 async function patchSettings(patch) {
   S.settings = await api.setSettings(patch);
   applySettingsUI();
 }
-document.querySelectorAll('.seg[data-seg]').forEach(seg => seg.addEventListener('click', e => {
-  const b = e.target.closest('button[data-v]');
-  if (!b) return;
-  const patch = { [seg.dataset.seg]: seg.dataset.type === 'str' ? b.dataset.v : Number(b.dataset.v) };
-  if (seg.dataset.seg === 'posX') patch.posY = 0;            // Left / Center / Right = along the top
-  patchSettings(patch);
-}));
-// dropdowns (.dd[data-dd]): the button opens the list (upwards when there's no room below), a pick saves it
-function closeDropdowns(except) { document.querySelectorAll('.dd.open').forEach(d => { if (d !== except) d.classList.remove('open'); }); }
-document.querySelectorAll('.dd[data-dd]').forEach(dd => {
-  const list = dd.querySelector('.dd-list');
-  dd.querySelector('.dd-btn').addEventListener('click', e => {
-    e.stopPropagation();
-    closeDropdowns(dd);
-    if (dd.classList.contains('open')) { dd.classList.remove('open'); return; }
-    const box = (dd.closest('.set-body') || document.body).getBoundingClientRect(), r = dd.getBoundingClientRect();
-    const below = box.bottom - r.bottom - 6, above = r.top - box.top - 6;
-    dd.classList.toggle('up', below < 150 && above > below);
-    list.style.maxHeight = `${Math.max(96, Math.min(220, dd.classList.contains('up') ? above : below))}px`;
-    dd.classList.add('open');
-    list.querySelector('button.active')?.scrollIntoView({ block: 'nearest' });
-  });
-  list.addEventListener('click', e => {
-    const b = e.target.closest('button[data-v]');
-    if (!b) return;
-    e.stopPropagation();
-    dd.classList.remove('open');
-    patchSettings({ [dd.dataset.dd]: b.dataset.v });
-  });
-});
-document.addEventListener('click', () => closeDropdowns());
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDropdowns(); });
 
-// screens to choose from (rebuilt whenever settings are shown, so plugging in a monitor shows up)
-async function renderScreens() {
-  const list = await api.displays();
-  $('screenRow').style.display = list.length > 1 ? '' : 'none';
-  const cur = S.settings.displayId ?? (list.find(d => d.primary) || {}).id;
-  $('screenSeg').innerHTML = list.map(d =>
-    `<button data-v="${d.id}" class="${d.id === cur ? 'active' : ''}" title="${d.w}×${d.h}${d.primary ? ' · main screen' : ''}">${d.index}${d.primary ? ' ★' : ''}</button>`).join('');
-}
-$('themePick').addEventListener('click', e => {
-  const b = e.target.closest('button[data-theme]');
-  if (b) patchSettings({ theme: b.dataset.theme });
-});
 // ================================================================== visualizer colours (palette engine)
-const VIZ_PRESETS = {
-  rainbow: ['#ff453a', '#ff9f0a', '#ffd60a', '#30d158', '#40c8e0', '#0a84ff', '#bf5af2'],
-  sunset: ['#ff5f6d', '#ff9966', '#ffc371'],
-  ocean: ['#00c6ff', '#0072ff', '#7b5cff'],
-  neon: ['#ff00cc', '#7a5cff', '#00f0ff'],
-  fire: ['#ff2a00', '#ff7b00', '#ffd000'],
-  aurora: ['#30d0c0', '#7b5cff', '#ff3787'],
-};
 let vizStopsCache = [[167, 139, 250]];
 const parseRgb = s => String(s).split(',').map(v => Number(v.trim()) || 0);
 function vizStops() {
@@ -90,96 +33,9 @@ const vizHot = (t, w = 0.6) => vizAt(t).map(v => Math.round(v + (255 - v) * w)).
 function applyVizColors() {
   vizStopsCache = vizStops();
   for (let i = 0; i < 5; i++) document.documentElement.style.setProperty(`--viz-c${i + 1}`, vizStr(i / 4));
-  const cb = document.querySelector('#vizPick .viz-custom-btn');
-  if (cb) {
-    const n = clamp(S.settings.vizCustomCount || 3, 1, 3), cols = (S.settings.vizCustom || []).slice(0, n);
-    cb.style.background = cols.length > 1 ? `linear-gradient(135deg, ${cols.join(', ')})` : (cols[0] || '#a78bfa');
-  }
-  const ab = document.querySelector('#vizPick [data-viz="accent"]');
-  if (ab) ab.style.background = 'rgb(var(--accent))';
 }
-document.querySelectorAll('#vizPick [data-viz]').forEach(b => {
-  const p = VIZ_PRESETS[b.dataset.viz];
-  if (p) b.style.background = `linear-gradient(135deg, ${p.join(', ')})`;
-});
-$('vizPick').addEventListener('click', e => {
-  const b = e.target.closest('[data-viz]');
-  if (b) patchSettings({ vizPalette: b.dataset.viz });
-});
-// the colour mixer: up to three colours of your own
-document.querySelectorAll('.vz-col').forEach(inp => {
-  inp.addEventListener('click', () => { S.modal = true; });           // the Windows colour dialog takes focus
-  inp.addEventListener('input', () => {                               // live preview while picking
-    const list = (S.settings.vizCustom || ['#a78bfa', '#ff3787', '#40c8e0']).slice();
-    list[+inp.dataset.i] = inp.value;
-    S.settings.vizCustom = list;
-    S.settings.vizPalette = 'custom';
-    applyVizColors();
-  });
-  inp.addEventListener('change', () => {
-    S.modal = false;
-    const list = (S.settings.vizCustom || []).slice();
-    list[+inp.dataset.i] = inp.value;
-    patchSettings({ vizCustom: list, vizPalette: 'custom' });
-  });
-  inp.addEventListener('blur', () => { S.modal = false; });
-});
-$('vizCount').addEventListener('click', e => {
-  const b = e.target.closest('[data-n]');
-  if (b) patchSettings({ vizCustomCount: +b.dataset.n, vizPalette: 'custom' });
-});
-// a custom accent colour
-$('accentCustom').addEventListener('click', () => { S.modal = true; });
-$('accentCustom').addEventListener('input', e => setAccent(hexToRgbStr(e.target.value)));
-$('accentCustom').addEventListener('change', e => { S.modal = false; patchSettings({ accentMode: 'custom', accentCustom: e.target.value }); });
-$('accentCustom').addEventListener('blur', () => { S.modal = false; });
 
-// ---- side mode: the apps that send the notch to the right edge
-const sideIcons = new Map();
-async function sideIcon(a) {
-  if (!a.path) return null;
-  if (!sideIcons.has(a.path)) sideIcons.set(a.path, api.appIcon(a.path));
-  return sideIcons.get(a.path);
-}
-function sideChip(a, removable) {
-  const letter = esc((a.name || a.exe).charAt(0).toUpperCase());
-  return `<button class="side-chip" data-exe="${esc(a.exe)}" title="${esc(a.exe)}">
-    <span class="sc-ic" data-path="${esc(a.path || '')}"><span class="app-letter" style="background:${avatarColor(a.name || a.exe)}">${letter}</span></span>
-    <span class="sc-name">${esc(a.name || a.exe)}</span>${removable ? `<span class="sc-x">${icon('x')}</span>` : `<span class="sc-x add">${icon('plus')}</span>`}</button>`;
-}
-async function renderSideApps() {
-  const list = S.settings.sideApps || [];
-  $('sideList').innerHTML = list.length ? list.map(a => sideChip(a, true)).join('') : '<span class="muted small">No apps yet</span>';
-  const recentAll = await api.sideApps();
-  const recent = recentAll.filter(r => !list.some(a => a.exe === r.exe));
-  $('sideRecent').innerHTML = recent.length ? recent.slice(0, 8).map(a => sideChip(a, false)).join('') : '<span class="muted small">Switch to an app, then come back here</span>';
-  // fill in real app icons (listed apps borrow the path/icon from the recent list when they lack one)
-  const all = [...list.map(a => { const r = recentAll.find(x => x.exe === a.exe) || {}; return { ...a, path: a.path || r.path, icon: r.icon }; }), ...recent];
-  document.querySelectorAll('#sideList .side-chip, #sideRecent .side-chip').forEach(async el => {
-    const a = all.find(x => x.exe === el.dataset.exe);
-    const src = a && (a.icon || await sideIcon(a));
-    if (src) el.querySelector('.sc-ic').innerHTML = `<img src="${esc(src)}" alt="">`;
-  });
-  LIVE_RECENT_APPS = recent;
-}
-let LIVE_RECENT_APPS = [];
-$('sideList').addEventListener('click', e => {
-  const b = e.target.closest('.side-chip');
-  if (b) patchSettings({ sideApps: (S.settings.sideApps || []).filter(a => a.exe !== b.dataset.exe) }).then(renderSideApps);
-});
-$('sideRecent').addEventListener('click', e => {
-  const b = e.target.closest('.side-chip');
-  const a = b && LIVE_RECENT_APPS.find(x => x.exe === b.dataset.exe);
-  if (a) patchSettings({ sideApps: [...(S.settings.sideApps || []), { exe: a.exe, name: a.name, path: a.path }] }).then(renderSideApps);
-});
-document.querySelector('#setNav [data-sec="side"]').addEventListener('click', renderSideApps);
-
-// ---- idle pill stats + header status strip
-function idleStatsCfg() { return idleCfg(); }
-$('idlePick').addEventListener('click', e => {
-  const b = e.target.closest('[data-stat]');
-  if (b) patchSettings({ idleStats: { ...idleStatsCfg(), [b.dataset.stat]: !idleStatsCfg()[b.dataset.stat] } });
-});
+// ---- header status strip
 let hdrStatsAt = 0;
 function renderHeaderStats() {
   if (S.mode !== 'expanded' || performance.now() - hdrStatsAt < 400) return;
@@ -191,81 +47,15 @@ function renderHeaderStats() {
   $('hdrStats').innerHTML = parts.join('<span class="hs-dot">·</span>');
 }
 
-// ---- party mode
-function partyLights() { return { beams: true, glow: true, particles: true, albumArt: true, ...(S.settings.partyLights || {}) }; }
-document.querySelectorAll('[data-light]').forEach(el => el.addEventListener('change', () => {
-  patchSettings({ partyLights: { ...partyLights(), [el.dataset.light]: el.checked } });
-}));
-$('partyGo').addEventListener('click', () => { collapse(); api.partyStart(); });
-// ---- desktop equalizer
+// ---- party mode + desktop equalizer buttons on the Home card
 $('mcDeskEq').addEventListener('click', () => patchSettings({ deskEq: !S.settings.deskEq }));
-let rangeSaveT = 0;
-document.querySelectorAll('[data-range]').forEach(el => {
-  el.addEventListener('input', () => {
-    el.style.setProperty('--p', el.value + '%');
-    $(el.dataset.out).textContent = el.value + '%';
-    S.settings[el.dataset.range] = +el.value;
-    if (el.dataset.range.startsWith('sideFade')) applySideFade();
-    clearTimeout(rangeSaveT);                                   // live while dragging, saved shortly after
-    rangeSaveT = setTimeout(() => api.setSettings({ [el.dataset.range]: +el.value }), 60);
-  });
-});
 $('mcParty').addEventListener('click', () => { collapse(); api.partyStart(); });
-
-$('fxPick').addEventListener('click', e => {
-  const b = e.target.closest('button[data-fx]');
-  if (b) patchSettings({ artFx: b.dataset.fx });
-});
-$('accentPick').addEventListener('click', e => {
-  const b = e.target.closest('button[data-accent]');
-  if (b) patchSettings({ accentMode: b.dataset.accent });
-});
-document.querySelectorAll('#accentPick button[data-accent]').forEach(b => {
-  if (ACCENTS[b.dataset.accent]) b.style.background = `rgb(${ACCENTS[b.dataset.accent]})`;
-});
 
 function applyExtrasUI() {
   const s = S.settings;
   document.documentElement.dataset.theme = s.theme || 'midnight';
   document.documentElement.dataset.shape = s.shape || 'notch';
-  document.querySelectorAll('.seg[data-seg]').forEach(seg => {
-    if (seg.id === 'screenSeg') return;
-    const str = seg.dataset.type === 'str';
-    const v = str ? String(s[seg.dataset.seg]) : Number(s[seg.dataset.seg]);
-    seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', (str ? b.dataset.v : Number(b.dataset.v)) === v));
-  });
-  document.querySelectorAll('.dd[data-dd]').forEach(dd => {
-    const items = [...dd.querySelectorAll('.dd-list button[data-v]')];
-    const cur = items.find(b => b.dataset.v === String(s[dd.dataset.dd])) || items[0];
-    items.forEach(b => b.classList.toggle('active', b === cur));
-    dd.querySelector('.dd-val').textContent = cur ? cur.textContent : '';
-  });
-  renderScreens();
   $('mcDeskEq').classList.toggle('on', !!s.deskEq);
-  const ic = idleStatsCfg();
-  document.querySelectorAll('#idlePick [data-stat]').forEach(b => b.classList.toggle('on', !!ic[b.dataset.stat]));
-  document.querySelectorAll('[data-range]').forEach(el => {
-    const v = s[el.dataset.range] ?? ({ deskEqIntensity: 60, fxSensitivity: 50, sideFadeBg: 95, sideFadeFg: 85 })[el.dataset.range] ?? 45;
-    if (document.activeElement !== el) { el.value = v; el.style.setProperty('--p', v + '%'); $(el.dataset.out).textContent = v + '%'; }
-  });
-  const pl = partyLights();
-  document.querySelectorAll('[data-light]').forEach(el => { el.checked = !!pl[el.dataset.light]; });
-  document.querySelectorAll('#themePick button').forEach(b => b.classList.toggle('active', b.dataset.theme === (s.theme || 'midnight')));
-  document.querySelectorAll('#accentPick button').forEach(b => b.classList.toggle('active', b.dataset.accent === (s.accentMode || 'auto')));
-  document.querySelectorAll('#fxPick button').forEach(b => b.classList.toggle('active', b.dataset.fx === (s.artFx || 'sun')));
-  const pal = s.vizPalette || 'accent';
-  document.querySelectorAll('#vizPick [data-viz]').forEach(b => b.classList.toggle('active', b.dataset.viz === pal));
-  $('vizMixer').classList.toggle('open', pal === 'custom');
-  const cols = s.vizCustom || ['#a78bfa', '#ff3787', '#40c8e0'];
-  const cnt = clamp(s.vizCustomCount || 3, 1, 3);
-  document.querySelectorAll('.vz-col').forEach(inp => {
-    inp.value = cols[+inp.dataset.i] || '#a78bfa';
-    inp.style.display = +inp.dataset.i < cnt ? '' : 'none';
-  });
-  document.querySelectorAll('#vizCount button').forEach(b => b.classList.toggle('active', +b.dataset.n === cnt));
-  $('accentCustom').value = s.accentCustom || '#a78bfa';
-  $('accentCustom').parentElement.classList.toggle('active', s.accentMode === 'custom');
-  if (s.accentMode === 'custom') $('accentCustom').parentElement.style.background = s.accentCustom;
   applyVizColors();
   if (SUN.raf) sunStop();          // restart the icon effect in its new style
   sparkEnsure();
@@ -276,7 +66,6 @@ function applyExtrasUI() {
 }
 
 function onTabShown(tab) {
-  if (tab === 'settings') renderScreens();
   if (tab === 'system') renderNet();
   if (tab === 'home') specEnsure();
   if (tab === 'alerts') { ALERTS.unread = 0; renderAlertBadge(); renderAlerts(); }
@@ -290,12 +79,6 @@ const BUILTINS = [
   ['wifi', 'wifi', 'Wi-Fi'], ['bluetooth', 'bluetooth', 'Bluetooth'], ['sound', 'volume', 'Sound'], ['settings', 'gear', 'Settings'],
 ];
 let lastRemoved = null;
-
-function avatarColor(name) {
-  let h = 0;
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return `hsl(${h % 360}, 55%, 42%)`;
-}
 
 function renderApps() {
   const grid = $('appsGrid');
@@ -537,21 +320,40 @@ function renderNet() {
 const VIZ = { stream: null, ctx: null, analyser: null, data: null, raf: 0, last: 0, failed: false, starting: false, stopTimer: 0 };
 const BANDS = [[30, 120], [120, 350], [350, 900], [900, 2200], [2200, 5500], [5500, 14000]];
 
+// This is the app's only system-audio capture. Other windows that move to music (dock, desktop equalizer, party,
+// live wallpaper) get its levels through main.js ('audio-want' says when any of them needs them; audiofeed.js reads
+// them there). Starting a capture can make an external monitor drop out on some laptops, so there's just this one.
+function vizWanted() { return !!S.settings.visualizer || !!S.audioWanted; }
 function vizCheck() {
-  const want = !!S.settings.visualizer && isPlaying() && !VIZ.failed;
+  const want = vizWanted() && isPlaying() && !VIZ.failed;
   if (want) {
     clearTimeout(VIZ.stopTimer); VIZ.stopTimer = 0;
     if (!VIZ.stream && !VIZ.starting) vizStart();
   } else if (VIZ.stream && !VIZ.stopTimer) {
-    // keep the capture alive briefly so pause → play doesn't restart it
-    VIZ.stopTimer = setTimeout(vizStop, S.settings.visualizer ? 15000 : 0);
+    // keep the capture alive a while so pause → play doesn't restart it
+    VIZ.stopTimer = setTimeout(vizStop, vizWanted() ? 60000 : 0);
   }
+  audioPumpEnsure();
   specEnsure();
-  const note = $('vizNote');
-  if (note) note.textContent = VIZ.failed
-    ? 'Couldn’t capture system audio here, so the bars use an animation instead.'
-    : 'Bars react to what your PC is actually playing.';
 }
+// the levels for the other windows: ~30 times a second, only while one of them wants them
+let audioPump = 0;
+function audioPumpEnsure() {
+  const on = !!S.audioWanted && !!VIZ.analyser;
+  if (on && !audioPump) audioPump = setInterval(pumpAudio, 33);       // a timer, so it runs even while the notch is hidden
+  if (!on && audioPump) { clearInterval(audioPump); audioPump = 0; }
+}
+function pumpAudio() {
+  const an = VIZ.analyser;
+  if (!an) return;
+  const freq = new Uint8Array(an.frequencyBinCount), wave = new Uint8Array(an.fftSize);
+  an.getByteFrequencyData(freq);
+  an.getByteTimeDomainData(wave);
+  const td = new Uint8Array(512);
+  for (let i = 0; i < 512; i++) td[i] = wave[Math.floor(i * wave.length / 512)];
+  api.audioFrame({ rate: VIZ.ctx.sampleRate, size: an.fftSize, freq: freq.slice(0, 768), td });   // up to ~18 kHz
+}
+api.on('audio-want', v => { S.audioWanted = !!v; vizCheck(); });
 
 async function vizStart() {
   VIZ.starting = true;
@@ -565,7 +367,7 @@ async function vizStart() {
     const ctx = new AudioContext();
     const src = ctx.createMediaStreamSource(stream);
     const an = ctx.createAnalyser();
-    an.fftSize = 1024;
+    an.fftSize = 2048;                                   // fine enough at the bass end for every window that uses it
     an.smoothingTimeConstant = 0.6;
     an.minDecibels = -95;
     an.maxDecibels = -12;
@@ -590,6 +392,7 @@ function vizStop() {
   if (VIZ.stream) VIZ.stream.getTracks().forEach(t => t.stop());
   if (VIZ.ctx) VIZ.ctx.close().catch(() => {});
   Object.assign(VIZ, { stream: null, ctx: null, analyser: null, data: null });
+  audioPumpEnsure();
   document.body.classList.remove('viz-live');
   document.querySelectorAll('.eq.live i').forEach(i => { i.style.height = ''; });
 }

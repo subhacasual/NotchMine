@@ -1,7 +1,7 @@
 {
   "name": "notchmine",
   "productName": "NotchMine",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "A dynamic notch for Windows with media controls, widgets and live activities.",
   "main": "src/main.js",
   "scripts": {
@@ -45,7 +45,17 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "allowElevation": true,
+      "license": "LICENSE",
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "NotchMine",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "include": "build/installer.nsh",
+      "uninstallDisplayName": "NotchMine"
     }
   },
   "dependencies": {

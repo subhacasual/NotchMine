@@ -35,8 +35,6 @@ let enterTimer = 0, leaveTimer = 0, peekTimer = 0;
 
 // ================================================================== helpers
 const pad2 = n => String(n).padStart(2, '0');
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function fmtDur(sec) {
   sec = Math.max(0, Math.floor(sec || 0));
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
@@ -136,16 +134,6 @@ function isNight() {
   const h = new Date().getHours();
   return h < 6 || h >= 18;
 }
-// WMO weather code → icon
-function wxIcon(code, day) {
-  if (code === 0) return day ? 'wxClear' : 'wxClearN';
-  if (code === 1 || code === 2) return day ? 'wxPartly' : 'wxPartlyN';
-  if (code === 45 || code === 48) return 'wxFog';
-  if (code >= 95) return 'wxStorm';
-  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return 'wxSnow';
-  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return 'wxRain';
-  return 'wxCloud';
-}
 // WMO weather code → the "mood" that colours the Weather theme, the weather card and the pill effects
 function weatherMood(w = S.weather) {
   if (!w) return '';
@@ -178,6 +166,7 @@ function applyWeatherMood() {
   root.dataset.wx = mood;
   root.dataset.wxNight = S.weather && S.weather.isDay === false ? '1' : '';
   if (typeof wxfxEnsure === 'function') wxfxEnsure();
+  if (S.weather) api.reportWeather({ code: S.weather.code, isDay: S.weather.isDay, text: S.weather.text || '' });   // the live wallpaper follows it
 }
 function shortRate(b) {
   if (b < 1024) return `${Math.round(b)} B/s`;
@@ -374,7 +363,12 @@ api.on('hover', h => {
   }
 });
 api.on('blur', () => { if (!S.hover && !S.pinned && !S.modal && S.mode === 'expanded') collapse(); });
+// the search box (Ctrl+Alt+Space) opens just below the pill: an open panel folds away first
+api.on('search-state', on => {
+  if (on && !S.pinned && S.mode === 'expanded') collapse();
+});
 api.on('open-tab', tab => {
+  if (tab === 'settings') { openSettings(); return; }
   expand(tab);
   api.focus();
   setTimeout(() => { if (!S.hover) scheduleCollapse(6000); }, 50);
@@ -382,7 +376,7 @@ api.on('open-tab', tab => {
 api.on('pulse', () => {
   island.classList.remove('pulse'); void island.offsetWidth; island.classList.add('pulse');
 });
-api.on('settings', s => { S.settings = s; applySettingsUI(); });
+api.on('settings', onSettings);
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { S.pinned = false; $('pinBtn').classList.remove('on'); collapse(); }
@@ -390,7 +384,7 @@ document.addEventListener('keydown', e => {
 });
 
 // ================================================================== tabs + header
-const TAB_NAMES = { game: 'Game', home: 'Home', apps: 'Apps', shelf: 'Shelf', tools: 'Focus', system: 'System', alerts: 'Alerts', settings: 'Settings' };
+const TAB_NAMES = { game: 'Game', home: 'Home', apps: 'Apps', shelf: 'Shelf', tools: 'Focus', system: 'System', alerts: 'Alerts' };
 function setTab(tab) {
   S.tab = tab;
   island.dataset.view = tab === 'overview' ? 'overview' : '';
@@ -731,15 +725,6 @@ function hslToRgb(h, s, l) {
   const q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
   const f = t => { t = (t + 1) % 1; return t < 1 / 6 ? p + (q - p) * 6 * t : t < 1 / 2 ? q : t < 2 / 3 ? p + (q - p) * (2 / 3 - t) * 6 : p; };
   return [f(h + 1 / 3) * 255, f(h) * 255, f(h - 1 / 3) * 255];
-}
-const DEFAULT_ACCENT = '167, 139, 250';
-const ACCENTS = {
-  purple: DEFAULT_ACCENT, blue: '10, 132, 255', teal: '64, 200, 224', green: '48, 209, 88',
-  orange: '255, 159, 10', pink: '255, 55, 135', red: '255, 69, 58',
-};
-function hexToRgbStr(hex) {
-  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
-  return m ? `${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)}` : null;
 }
 function setAccent(rgb) {
   document.documentElement.style.setProperty('--accent', rgb);
@@ -1427,12 +1412,9 @@ function renderClipboard() {
 $('clipClear').addEventListener('click', () => api.clearClipboard());
 
 // ================================================================== settings
+// The options are edited in the settings window; the notch follows whatever main.js sends it.
 function applySettingsUI() {
   const s = S.settings;
-  document.querySelectorAll('[data-setting]').forEach(el => { el.checked = !!s[el.dataset.setting]; });
-  if (document.activeElement !== $('setCity')) $('setCity').value = s.city || '';
-  $('setWork').value = s.pomodoroWork || 25;
-  $('setBreak').value = s.pomodoroBreak || 5;
   if (document.activeElement !== $('notes')) $('notes').value = s.notes || '';
   $('notesCount').textContent = (s.notes || '').length ? `${s.notes.length} chars` : '';
   document.documentElement.dataset.layout = isStacked() ? 'stacked' : 'tabs';
@@ -1446,40 +1428,30 @@ function applySettingsUI() {
   updateAccent(S.media.thumb);
   if (typeof applyExtrasUI === 'function') applyExtrasUI();
 }
-document.querySelectorAll('[data-setting]').forEach(el => {
-  el.addEventListener('change', async () => {
-    S.settings = await api.setSettings({ [el.dataset.setting]: el.checked });
-    applySettingsUI();
-  });
-});
-async function saveCity() {
-  const q = $('setCity').value.trim();
-  if (!q) return;
-  $('cityHint').textContent = 'Searching…';
-  try {
-    const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=1&language=en&format=json`);
-    const j = await r.json();
-    const g = j.results && j.results[0];
-    if (!g) { $('cityHint').textContent = `Couldn't find "${q}"`; return; }
-    S.settings = await api.setSettings({ city: g.name, lat: g.latitude, lon: g.longitude });
-    $('setCity').value = g.name;
-    $('cityHint').textContent = `✓ ${[g.name, g.admin1, g.country].filter(Boolean).join(', ')}`;
-    fetchWeather();
-  } catch {
-    $('cityHint').textContent = 'Network error, try again';
+// settings that change many times a second while a slider or colour picker is dragged: just repaint what they touch
+const LIVE_KEYS = new Set(['fxSensitivity', 'sideFadeBg', 'sideFadeFg', 'deskEqIntensity', 'deskEqHeight', 'wpAmount', 'wpDim',
+  'accentCustom', 'vizCustom']);
+const sameSetting = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b);
+function onSettings(s) {
+  const prev = S.settings || {};
+  S.settings = s;
+  const changed = Object.keys({ ...prev, ...s }).filter(k => !sameSetting(prev[k], s[k]));
+  if (changed.length && changed.every(k => LIVE_KEYS.has(k))) {
+    applySideFade();
+    if (changed.includes('accentCustom')) updateAccent(S.media.thumb);
+    if (changed.includes('vizCustom')) applyVizColors();
+    return;
   }
+  if (prev.lat !== s.lat || prev.lon !== s.lon) fetchWeather();          // a new weather city
+  if ((prev.pomodoroWork !== s.pomodoroWork || prev.pomodoroBreak !== s.pomodoroBreak) &&
+      !T.running && (T.preset === 'focus' || T.preset === 'break') && T.remaining === T.total) tmSet(T.preset);
+  applySettingsUI();
 }
-$('setCitySave').addEventListener('click', saveCity);
-$('setCity').addEventListener('keydown', e => { if (e.key === 'Enter') saveCity(); });
-async function savePomodoro() {
-  const work = clamp(parseInt($('setWork').value, 10) || 25, 1, 180);
-  const brk = clamp(parseInt($('setBreak').value, 10) || 5, 1, 60);
-  S.settings = await api.setSettings({ pomodoroWork: work, pomodoroBreak: brk });
-  if (!T.running && (T.preset === 'focus' || T.preset === 'break') && T.remaining === T.total) tmSet(T.preset);
+function openSettings(sec) {
+  api.openSettings(sec);
+  if (!S.pinned) collapse();
 }
-$('setWork').addEventListener('change', savePomodoro);
-$('setBreak').addEventListener('change', savePomodoro);
-$('quitBtn').addEventListener('click', () => api.quit());
+$('settingsBtn').addEventListener('click', () => openSettings());
 
 // focus the window when the user clicks into a text field (window is shown inactive)
 document.addEventListener('mousedown', e => {

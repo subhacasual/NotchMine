@@ -1,0 +1,133 @@
+/* NotchMine search box (search.html): the notch grows into a search bar. */
+:root {
+  --bg: #000;
+  --row: rgba(255, 255, 255, 0.06);
+  --row-sel: rgba(255, 255, 255, 0.11);
+  --line: rgba(255, 255, 255, 0.08);
+  --text: #f5f5f7;
+  --muted: rgba(235, 235, 245, 0.55);
+  --faint: rgba(235, 235, 245, 0.3);
+  --accent: 167, 139, 250;
+  --green: #30d158;
+  --orange: #ff9f0a;
+  --spring: cubic-bezier(0.32, 1.32, 0.52, 1);
+  --smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --box-w: 660px;
+  color-scheme: dark;
+}
+:root[data-theme="graphite"] { --bg: #1c1c1f; }
+:root[data-theme="glass"] { --bg: rgba(24, 24, 30, 0.9); --line: rgba(255, 255, 255, 0.1); }
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%; height: 100%; overflow: hidden; background: transparent;
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; font-size: 13px;
+  color: var(--text); user-select: none; -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+input { font: inherit; color: inherit; }
+i[data-icon] { display: inline-flex; width: 16px; height: 16px; flex: none; }
+i[data-icon] svg, .ic svg { width: 100%; height: 100%; }
+
+#wrap { position: absolute; inset: 0; }
+
+/* ---------------------------------------------------------------- the box */
+#box {
+  position: absolute; top: 0; left: 20px; width: var(--box-w);
+  background: var(--bg); border-radius: 0 0 24px 24px;
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.06), 0 22px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  /* closed: the size of the pill it grows out of */
+  clip-path: inset(0 calc(50% - 110px) calc(100% - 34px) calc(50% - 110px) round 0 0 16px 16px);
+  transition: clip-path 0.42s var(--spring);
+}
+#box.open { clip-path: inset(0 0 0 0 round 0 0 24px 24px); }
+#box > * { opacity: 0; transition: opacity 0.16s var(--smooth); }
+#box.open > * { opacity: 1; transition-delay: 0.07s; }
+:root[data-theme="aurora"] #box::before {
+  content: ""; position: absolute; inset: -40% -10% auto; height: 120%; pointer-events: none; opacity: 0.35; filter: blur(40px);
+  background: radial-gradient(closest-side, rgba(var(--accent), 0.55), transparent);
+}
+
+/* island shape: a floating rounded box just below the top edge */
+:root[data-island="1"] #box { top: 0; border-radius: 24px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 22px 60px rgba(0, 0, 0, 0.5); clip-path: inset(0 calc(50% - 110px) calc(100% - 34px) calc(50% - 110px) round 17px); }
+:root[data-island="1"] #box.open { clip-path: inset(0 0 0 0 round 24px); }
+:root[data-island="1"] .ear { display: none; }
+
+/* the concave "ears" that make it look carved out of the screen edge (notch shape) */
+.ear { position: absolute; top: 0; width: 16px; height: 16px; pointer-events: none; opacity: 0; transition: opacity 0.2s var(--smooth); }
+.ear.l { background: radial-gradient(circle at 0 100%, transparent 15.5px, var(--bg) 16px); }
+.ear.r { background: radial-gradient(circle at 100% 100%, transparent 15.5px, var(--bg) 16px); }
+#wrap.open .ear { opacity: 1; transition-delay: 0.12s; }
+
+/* ---------------------------------------------------------------- search bar */
+.bar { display: flex; align-items: center; gap: 12px; height: 58px; padding: 0 16px 0 20px; position: relative; }
+.bar::after { content: ""; position: absolute; left: 16px; right: 16px; bottom: 0; height: 1px; background: var(--line); }
+.bar-ic { width: 20px !important; height: 20px !important; color: rgba(var(--accent), 1); }
+#q {
+  flex: 1; min-width: 0; height: 100%; background: none; border: 0; outline: none;
+  font-size: 18px; font-weight: 400; letter-spacing: 0.1px; caret-color: rgb(var(--accent));
+}
+#q::placeholder { color: var(--faint); }
+.chips { display: flex; gap: 2px; padding: 3px; border-radius: 13px; background: rgba(255, 255, 255, 0.06); flex: none; }
+.chips button { height: 22px; padding: 0 10px; border-radius: 10px; font-size: 11.5px; font-weight: 600; color: var(--muted); transition: background 0.15s, color 0.15s; }
+.chips button:hover { color: var(--text); }
+.chips button.on { background: rgba(255, 255, 255, 0.14); color: var(--text); }
+
+/* ---------------------------------------------------------------- results */
+.list { max-height: 500px; overflow-y: auto; padding: 6px 8px; scroll-padding: 6px; }
+.list:empty { display: none; }
+.list::-webkit-scrollbar { width: 8px; }
+.list::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 4px; border: 2px solid transparent; background-clip: padding-box; }
+.sec-h { padding: 8px 12px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase; color: var(--faint); }
+
+.row {
+  display: flex; align-items: center; gap: 12px; height: 46px; padding: 0 12px; border-radius: 12px; cursor: default;
+  position: relative;
+}
+.row.sel { background: var(--row-sel); }
+.row.sel::before { content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; border-radius: 2px; background: rgb(var(--accent)); }
+.ic { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 7px; overflow: hidden; }
+.ic img { width: 28px; height: 28px; object-fit: contain; }
+.ic.glyph { background: rgba(255, 255, 255, 0.08); color: var(--text); padding: 6px; }
+.ic.glyph.accent { background: rgba(var(--accent), 0.2); color: rgb(var(--accent)); }
+.ic.letter { color: #fff; font-weight: 700; font-size: 13px; }
+.tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.t { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.t b { font-weight: 700; color: #fff; }
+.s { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: ltr; }
+.tag { flex: none; font-size: 11px; color: var(--faint); font-weight: 600; }
+.row.sel .tag { color: var(--muted); }
+
+/* the answer to a sum or a conversion: big */
+.row.big { height: 64px; }
+.row.big .t { font-size: 22px; font-weight: 600; letter-spacing: 0.2px; }
+.row.big .ic { width: 34px; height: 34px; border-radius: 9px; padding: 7px; }
+
+.tips { padding: 10px 14px 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; }
+.tip { display: flex; flex-direction: column; gap: 2px; }
+.tip span { font-size: 11px; color: var(--faint); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+.tip code { font-family: inherit; font-size: 12.5px; color: var(--muted); }
+
+/* ---------------------------------------------------------------- footer */
+.foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 32px; padding: 0 18px;
+  border-top: 1px solid var(--line); font-size: 11.5px; color: var(--faint);
+}
+.src { display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.src .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: none; }
+.src.fast .dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.src.slow .dot { background: var(--orange); }
+.src a { color: rgb(var(--accent)); cursor: pointer; text-decoration: none; font-weight: 600; }
+.src a:hover { text-decoration: underline; }
+.keys { display: flex; gap: 12px; white-space: nowrap; flex: none; }
+.keys kbd { font: inherit; font-size: 10.5px; padding: 0 4px; border-radius: 4px; background: rgba(255, 255, 255, 0.1); color: var(--muted); margin-right: 3px; }
+
+/* ---------------------------------------------------------------- the answer page (a browser view sits on top of #pv) */
+#box.with-pv .list { max-height: 150px; }
+.pv { position: relative; height: 400px; margin: 2px 10px 10px; border-radius: 14px; background: rgba(255, 255, 255, 0.04); overflow: hidden; }
+.pv[hidden] { display: none; }
+.pv-wait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--muted); font-size: 12.5px; }
+.pv.err .spin { display: none; }
+.spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.15); border-top-color: rgb(var(--accent)); animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }

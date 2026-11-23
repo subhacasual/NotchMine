@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>NotchMine Dock</title>
+  <link rel="stylesheet" href="dock.css">
+</head>
+<body>
+  <canvas id="eq"></canvas>
+  <div id="zones" class="zones">
+    <div class="np hit" id="np" hidden></div>
+    <div class="dock hit" id="dock"></div>
+    <div class="right-zone" id="rightZone"><div class="rz-status" id="rzStatus"></div></div>
+  </div>
+  <div class="bar hit" id="bar" hidden>
+    <canvas id="barEq"></canvas>
+    <div class="bar-l" id="barL"></div>
+    <div class="bar-m" id="barM"></div>
+    <div class="bar-r" id="barR"></div>
+  </div>
+  <div class="tip" id="tip"></div>
+  <div class="wlist hit" id="wlist"></div>
+  <script src="icons.js"></script>
+  <script src="audiofeed.js"></script>
+  <script src="dock.js"></script>
+</body>
+</html>

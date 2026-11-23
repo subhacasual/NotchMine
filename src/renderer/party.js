@@ -69,20 +69,11 @@ const AU = {
   bass: 0, raw: 0, level: 0.3, prevBass: 0, lastKick: 0, flash: 0,
   bands: new Float32Array(NB),
 };
-async function startAudio() {
+// the sound comes from the notch's one capture (audiofeed.js), never a capture of our own
+function startAudio() {
   if (settings.visualizer === false) return;
-  try {
-    const s = await navigator.mediaDevices.getUserMedia({
-      audio: { mandatory: { chromeMediaSource: 'desktop' } },
-      video: { mandatory: { chromeMediaSource: 'desktop', maxWidth: 64, maxHeight: 64, maxFrameRate: 1 } },
-    });
-    s.getVideoTracks().forEach(t => t.stop());
-    const ctx = new AudioContext();
-    const an = ctx.createAnalyser();
-    an.fftSize = 2048; an.smoothingTimeConstant = 0.62; an.minDecibels = -95; an.maxDecibels = -12;
-    ctx.createMediaStreamSource(s).connect(an);
-    Object.assign(AU, { an, ctx, data: new Uint8Array(an.frequencyBinCount), td: new Uint8Array(an.fftSize) });
-  } catch (e) { console.warn('party: no system audio, using a synthetic beat', e && e.message); }
+  const an = AUDIO_FEED.an;
+  Object.assign(AU, { an, ctx: AUDIO_FEED.ctx, data: new Uint8Array(an.frequencyBinCount), td: new Uint8Array(an.fftSize) });
 }
 function listen(t) {
   const playing = isPlaying();

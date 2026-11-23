@@ -7,7 +7,9 @@ const CHANNELS = [
   'open-tab', 'pulse', 'net', 'notif', 'notif-status',
   'mixer', 'privacy', 'mic', 'audio-device', 'lockkey', 'drive', 'capture', 'download', 'phone-file', 'phone-status',
   'party', 'party-plan', 'party-sync', 'accent', 'anchor', 'drag-state', 'side', 'conn', 'fullscreen',
-  'game', 'game-ask', 'game-summary', 'panel-toggle',
+  'game', 'game-ask', 'game-summary', 'panel-toggle', 'wp-weather', 'wp-paused', 'dock-state', 'dock-over', 'settings-goto', 'wp-bg', 'my-wallpaper',
+  'audio', 'audio-want', 'amb-src', 'amb-peek',
+  'search-open', 'search-close', 'search-status', 'search-apps', 'search-accent', 'search-state', 'search-preview-state',
 ];
 
 contextBridge.exposeInMainWorld('notch', {
@@ -17,6 +19,8 @@ contextBridge.exposeInMainWorld('notch', {
   },
   init: () => ipcRenderer.invoke('init'),
   setSettings: patch => ipcRenderer.invoke('settings-set', patch),
+  openSettings: sec => ipcRenderer.send('open-settings', sec || ''),
+  settingsInit: () => ipcRenderer.invoke('settings-init'),
   setHitRect: r => ipcRenderer.send('hit-rect', r),
   dragStart: () => ipcRenderer.send('drag-start'),
   dragEnd: () => ipcRenderer.send('drag-end'),
@@ -58,8 +62,17 @@ contextBridge.exposeInMainWorld('notch', {
   partyStart: () => ipcRenderer.send('party-start'),
   partyStop: () => ipcRenderer.send('party-stop'),
   partyInit: () => ipcRenderer.invoke('party-init'),
+  wpInit: () => ipcRenderer.invoke('wp-init'),
+  ambInit: () => ipcRenderer.invoke('amb-init'),
+  ambPreview: () => ipcRenderer.send('amb-preview'),
+  myWallpaper: () => ipcRenderer.invoke('my-wallpaper'),
+  reportWeather: w => ipcRenderer.send('weather-report', w),
+  dockInit: () => ipcRenderer.invoke('dock-init'),
+  dockRects: r => ipcRenderer.send('dock-rects', r),
+  dockCmd: c => ipcRenderer.send('dock-cmd', c),
   partySync: s => ipcRenderer.send('party-sync', s),
   reportAccent: rgb => ipcRenderer.send('accent-changed', rgb),
+  audioFrame: f => ipcRenderer.send('audio-frame', f),
   phoneStart: () => ipcRenderer.invoke('phone-start'),
   phoneStop: () => ipcRenderer.invoke('phone-stop'),
 
@@ -68,4 +81,19 @@ contextBridge.exposeInMainWorld('notch', {
   action: name => ipcRenderer.send('action', name),
   focus: () => ipcRenderer.send('focus-window'),
   quit: () => ipcRenderer.send('quit'),
+
+  // search box (search.html) + Settings → Search
+  searchFiles: q => ipcRenderer.invoke('search-files', q),
+  searchIcon: key => ipcRenderer.invoke('search-icon', key),
+  searchRun: (item, q, alt) => ipcRenderer.send('search-run', item, q, alt || ''),
+  searchHide: () => ipcRenderer.send('search-hide'),
+  searchDrag: p => ipcRenderer.send('search-drag', p),
+  searchForget: key => ipcRenderer.send('search-forget', key),
+  searchStatus: () => ipcRenderer.invoke('search-status'),
+  searchSetHotkey: accel => ipcRenderer.invoke('search-hotkey', accel),
+  searchPauseHotkey: on => ipcRenderer.send('search-hotkey-pause', !!on),
+  searchEverything: what => ipcRenderer.send('search-everything', what),
+  searchOpen: () => ipcRenderer.send('search-open'),
+  searchPreview: req => ipcRenderer.send('search-preview', req || null),
+  searchPreviewOpen: q => ipcRenderer.send('search-preview-open', q),
 });
