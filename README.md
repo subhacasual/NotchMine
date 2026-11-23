@@ -51,7 +51,7 @@ Windows 10 / 11 · Electron · Free and open source (MIT)
 ## Install
 
 ### Option 1: installer (recommended)
-1. Go to the [**Releases**](../../releases) page and download the latest `NotchMine Setup x.y.z.exe`.
+1. Go to the [**Releases**](../../releases) page and download the latest `NotchMine-Setup-x.y.z.exe`.
 2. Run it and follow the wizard: welcome, license, install for just you or everyone, folder, then **Extras**:
    - **Install Everything by voidtools** (on by default, bundled, about 2 MB). It makes file search instant. Windows asks for permission once, because Everything installs a small service. If it's already on your PC, Setup skips it.
    - **Start NotchMine when Windows starts** (on by default).
@@ -60,7 +60,7 @@ Windows 10 / 11 · Electron · Free and open source (MIT)
 Uninstall from Windows Settings → Apps. Everything stays installed, because it's its own app; remove it there too if you want.
 
 ### Option 1b: portable
-Download `NotchMine x.y.z.exe` instead. There's nothing to install, and it starts with Windows automatically (turn that off in Settings → General → **Launch at login** or the tray menu). Keep it in a fixed folder, for example `C:\Apps\NotchMine`, rather than in Downloads. The portable build doesn't include Everything; get it from [voidtools.com](https://www.voidtools.com/downloads/) if you want instant file search.
+Download `NotchMine-x.y.z-portable.exe` instead. There's nothing to install, and it starts with Windows automatically (turn that off in Settings → General → **Launch at login** or the tray menu). Keep it in a fixed folder, for example `C:\Apps\NotchMine`, rather than in Downloads. The portable build doesn't include Everything; get it from [voidtools.com](https://www.voidtools.com/downloads/) if you want instant file search.
 
 > **"Windows protected your PC"?** The app isn't code-signed, so SmartScreen warns about it. Click **More info → Run anyway**.
 
